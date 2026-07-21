@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/Knapptan/Y-URL-shortener/internal/handler"
 	"github.com/Knapptan/Y-URL-shortener/internal/repository"
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
@@ -14,20 +16,16 @@ func main() {
 	svc := service.NewURLService(repo)
 	h := handler.NewURLHandler(svc)
 
-	// регистрируем маршруты
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// если путь = "/" и метод POST -> создание
-		// если путь содержит ID (т.е. не просто "/") -> редирект
-		if r.URL.Path == "/" {
-			h.CreateShortURL(w, r)
-		} else {
-			h.RedirectToOriginal(w, r)
-		}
-	})
+	// Создаём роутер
+	r := chi.NewRouter()
 
-	// запускаем сервер на порту 8080
-	println("Starting server on :8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	// Регистрируем маршруты
+	r.Post("/", h.CreateShortURL)
+	r.Get("/{id}", h.RedirectToOriginal)
+
+	// Запускаем сервер на порту 8080
+	println("Server is running on :8080")
+	if err := http.ListenAndServe(":8080", r); err != nil {
 		panic(err)
 	}
 }

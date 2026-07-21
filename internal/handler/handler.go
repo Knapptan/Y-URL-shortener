@@ -3,8 +3,10 @@ package handler
 import (
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
+	"github.com/go-chi/chi"
 )
 
 // URLHandler содержит сервис и методы-обработчики.
@@ -53,8 +55,13 @@ func (h *URLHandler) RedirectToOriginal(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// извлекаем id из пути (например, "/EwHXdJfB" -> "EwHXdJfB")
-	id := r.URL.Path[1:] // отрезаем первый слеш
+	// Попытка получить ID из параметра chi (если используется роутер)
+	id := chi.URLParam(r, "id")
+	// Если параметр пуст (тесты, прямой вызов), берём из пути
+	if id == "" {
+		id = strings.TrimPrefix(r.URL.Path, "/")
+	}
+
 	if id == "" {
 		http.Error(w, "Missing ID", http.StatusBadRequest)
 		return
@@ -62,10 +69,10 @@ func (h *URLHandler) RedirectToOriginal(w http.ResponseWriter, r *http.Request) 
 
 	originalURL, ok := h.service.GetOriginal(id)
 	if !ok {
-		http.Error(w, "URL not found", http.StatusBadRequest) // по ТЗ 400
+		http.Error(w, "URL not found", http.StatusBadRequest)
 		return
 	}
 
 	w.Header().Set("Location", originalURL)
-	w.WriteHeader(http.StatusTemporaryRedirect) // 307
+	w.WriteHeader(http.StatusTemporaryRedirect)
 }
