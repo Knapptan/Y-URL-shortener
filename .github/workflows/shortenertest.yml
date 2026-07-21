@@ -7,7 +7,6 @@ on:
       - main
 
 jobs:
-
   branchtest:
     runs-on: ubuntu-latest
 
@@ -22,7 +21,7 @@ jobs:
     needs: branchtest
 
     env:
-      DATABASE_CONN_STRING: "postgres://postgres:postgres@postgres:5432/praktikum?sslmode=disable"
+      DATABASE_CONN_STRING: 'postgres://postgres:postgres@postgres:5432/praktikum?sslmode=disable'
 
     services:
       postgres:
@@ -45,7 +44,7 @@ jobs:
         with:
           repository: Yandex-Practicum/go-autotests
           latest: true
-          fileName: "*"
+          fileName: '*'
           out-file-path: .tools
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -58,14 +57,14 @@ jobs:
 
       - name: Setup go deps
         run: |
-          go install golang.org/x/tools/cmd/goimports@latest
+          go install golang.org/x/tools/cmd/goimports@v0.17.0
 
       - name: Build server binary
         run: |
           cd cmd/shortener
           go build -buildvcs=false -o shortener
 
-      - name: "Code increment #1"
+      - name: 'Code increment #1'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter1' ||
@@ -96,7 +95,7 @@ jobs:
           shortenertestbeta -test.v -test.run=^TestIteration1$ \
               -binary-path=cmd/shortener/shortener
 
-      - name: "Code increment #2"
+      - name: 'Code increment #2'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter2' ||
@@ -125,7 +124,7 @@ jobs:
         run: |
           shortenertestbeta -test.v -test.run=^TestIteration2$ -source-path=.
 
-      - name: "Code increment #3"
+      - name: 'Code increment #3'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter3' ||
@@ -153,7 +152,7 @@ jobs:
         run: |
           shortenertestbeta -test.v -test.run=^TestIteration3$ -source-path=.
 
-      - name: "Code increment #4"
+      - name: 'Code increment #4'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter4' ||
@@ -183,7 +182,7 @@ jobs:
               -binary-path=cmd/shortener/shortener \
               -server-port=$SERVER_PORT
 
-      - name: "Code increment #5"
+      - name: 'Code increment #5'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter5' ||
@@ -212,7 +211,7 @@ jobs:
               -binary-path=cmd/shortener/shortener \
               -server-port=$SERVER_PORT
 
-      - name: "Code increment #6"
+      - name: 'Code increment #6'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter6' ||
@@ -238,7 +237,7 @@ jobs:
           shortenertestbeta -test.v -test.run=^TestIteration6$ \
               -source-path=.
 
-      - name: "Code increment #7"
+      - name: 'Code increment #7'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter7' ||
@@ -264,7 +263,7 @@ jobs:
               -binary-path=cmd/shortener/shortener \
               -source-path=.
 
-      - name: "Code increment #8"
+      - name: 'Code increment #8'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter8' ||
@@ -288,7 +287,7 @@ jobs:
           shortenertestbeta -test.v -test.run=^TestIteration8$ \
               -binary-path=cmd/shortener/shortener
 
-      - name: "Code increment #9"
+      - name: 'Code increment #9'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter9' ||
@@ -314,7 +313,7 @@ jobs:
               -source-path=. \
               -file-storage-path=$TEMP_FILE
 
-      - name: "Code increment #10"
+      - name: 'Code increment #10'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter10' ||
@@ -339,7 +338,7 @@ jobs:
               -database-dsn=$DATABASE_CONN_STRING
           wipedb $DATABASE_CONN_STRING
 
-      - name: "Code increment #11"
+      - name: 'Code increment #11'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter11' ||
@@ -362,7 +361,7 @@ jobs:
               -database-dsn=$DATABASE_CONN_STRING
           wipedb $DATABASE_CONN_STRING
 
-      - name: "Code increment #12"
+      - name: 'Code increment #12'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter12' ||
@@ -384,7 +383,7 @@ jobs:
               -database-dsn=$DATABASE_CONN_STRING
           wipedb $DATABASE_CONN_STRING
 
-      - name: "Code increment #13"
+      - name: 'Code increment #13'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter13' ||
@@ -405,7 +404,7 @@ jobs:
               -database-dsn=$DATABASE_CONN_STRING
           wipedb $DATABASE_CONN_STRING
 
-      - name: "Code increment #14"
+      - name: 'Code increment #14'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter14' ||
@@ -425,7 +424,7 @@ jobs:
               -database-dsn=$DATABASE_CONN_STRING
           wipedb $DATABASE_CONN_STRING
 
-      - name: "Code increment #15"
+      - name: 'Code increment #15'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter15' ||
@@ -444,7 +443,7 @@ jobs:
               -database-dsn=$DATABASE_CONN_STRING
           wipedb $DATABASE_CONN_STRING
 
-      - name: "Code increment #16"
+      - name: 'Code increment #16'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter16' ||
@@ -460,7 +459,7 @@ jobs:
           shortenertestbeta -test.v -test.run=^TestIteration16$ \
               -source-path=. \
 
-      - name: "Code increment #17"
+      - name: 'Code increment #17'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter17' ||
@@ -475,7 +474,7 @@ jobs:
           shortenertestbeta -test.v -test.run=^TestIteration17$ \
               -source-path=. \
 
-      - name: "Code increment #18"
+      - name: 'Code increment #18'
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter18' ||
