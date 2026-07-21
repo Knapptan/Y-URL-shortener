@@ -79,7 +79,7 @@ func TestHandler_CreateShortURL(t *testing.T) {
 				saveFunc: tt.mockSave,
 			}
 			svc := service.NewURLService(repo)
-			h := NewURLHandler(svc)
+			h := NewURLHandler(svc, "http://localhost:8080")
 
 			// Создаём запрос
 			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
@@ -153,7 +153,7 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 				getFunc: tt.mockGet,
 			}
 			svc := service.NewURLService(repo)
-			h := NewURLHandler(svc)
+			h := NewURLHandler(svc, "http://localhost:8080")
 
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			w := httptest.NewRecorder()
