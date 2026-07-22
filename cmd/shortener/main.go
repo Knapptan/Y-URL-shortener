@@ -5,29 +5,27 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Knapptan/Y-URL-shortener/internal/config"
 	"github.com/Knapptan/Y-URL-shortener/internal/handler"
 	"github.com/Knapptan/Y-URL-shortener/internal/repository"
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
 )
 
 func main() {
-	// Парсим флаги
-	cfg := config.ParseFlags()
-
-	// Инициализация зависимостей
+	// инициализируем слои
 	repo := repository.NewInMemoryRepo()
 	svc := service.NewURLService(repo)
-	h := handler.NewURLHandler(svc, cfg.BaseURL)
+	h := handler.NewURLHandler(svc)
 
-	// Настройка роутера
+	// Создаём роутер
 	r := chi.NewRouter()
+
+	// Регистрируем маршруты
 	r.Post("/", h.CreateShortURL)
 	r.Get("/{id}", h.RedirectToOriginal)
 
-	// Запуск сервера на адресе из флага -a
-	println("Server is running on", cfg.ServerAddress)
-	if err := http.ListenAndServe(cfg.ServerAddress, r); err != nil {
+	// Запускаем сервер на порту 8080
+	println("Server is running on :8080")
+	if err := http.ListenAndServe(":8080", r); err != nil {
 		panic(err)
 	}
 }

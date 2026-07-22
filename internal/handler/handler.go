@@ -12,15 +12,11 @@ import (
 // URLHandler содержит сервис и методы-обработчики.
 type URLHandler struct {
 	service *service.URLService
-	baseURL string // базовый адрес для формирования коротких URL
 }
 
-// NewURLHandler конструктор.
-func NewURLHandler(svc *service.URLService, baseURL string) *URLHandler {
-	return &URLHandler{
-		service: svc,
-		baseURL: baseURL,
-	}
+// NewURLHandler конструктор
+func NewURLHandler(service *service.URLService) *URLHandler {
+	return &URLHandler{service: service}
 }
 
 // CreateShortURL обрабатывает POST /.
@@ -45,7 +41,7 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// формируем полную короткую ссылку
-	shortURL := h.baseURL + "/" + id
+	shortURL := "http://localhost:8080/" + id
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated) // 201
