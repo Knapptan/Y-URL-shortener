@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Knapptan/Y-URL-shortener/internal/config"
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
 	"github.com/stretchr/testify/assert"
 )
@@ -62,14 +63,6 @@ func TestHandler_CreateShortURL(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "some error\n",
 		},
-		{
-			name:           "method not allowed",
-			method:         http.MethodGet,
-			body:           "",
-			mockSave:       nil,
-			expectedStatus: http.StatusBadRequest,
-			expectedBody:   "Only POST allowed\n",
-		},
 	}
 
 	for _, tt := range tests {
@@ -79,7 +72,7 @@ func TestHandler_CreateShortURL(t *testing.T) {
 				saveFunc: tt.mockSave,
 			}
 			svc := service.NewURLService(repo)
-			h := NewURLHandler(svc, "http://localhost:8080")
+			h := NewURLHandler(svc, config.DefaultBaseURL)
 
 			// Создаём запрос
 			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
@@ -138,13 +131,6 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 		},
-		{
-			name:           "method not allowed",
-			method:         http.MethodPost,
-			path:           "/abc123",
-			mockGet:        nil,
-			expectedStatus: http.StatusBadRequest,
-		},
 	}
 
 	for _, tt := range tests {
@@ -153,7 +139,7 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 				getFunc: tt.mockGet,
 			}
 			svc := service.NewURLService(repo)
-			h := NewURLHandler(svc, "http://localhost:8080")
+			h := NewURLHandler(svc, config.DefaultBaseURL)
 
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			w := httptest.NewRecorder()

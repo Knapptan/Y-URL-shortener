@@ -30,23 +30,21 @@ func (r *InMemoryRepo) Save(originalURL string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Генерируем 6 случайных байт -> 8 символов base64
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	id := base64.URLEncoding.EncodeToString(b)[:8]
+	var id string
 
-	// Проверка коллизии
 	for {
-		if _, exists := r.data[id]; !exists {
-			break
-		}
-		// если вдруг совпало, генерируем новый
+		// генерируем случайный ID
+		b := make([]byte, 6)
 		if _, err := rand.Read(b); err != nil {
 			return "", err
 		}
 		id = base64.URLEncoding.EncodeToString(b)[:8]
+
+		// проверяем, не занят ли ID
+		if _, exists := r.data[id]; !exists {
+			break
+		}
+		// если занят – цикл повторится с новой генерацией
 	}
 
 	r.data[id] = originalURL

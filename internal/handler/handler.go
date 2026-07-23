@@ -25,12 +25,6 @@ func NewURLHandler(svc *service.URLService, baseURL string) *URLHandler {
 
 // CreateShortURL обрабатывает POST /.
 func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
-	// только POST
-	if r.Method != http.MethodPost {
-		http.Error(w, "Only POST allowed", http.StatusBadRequest)
-		return
-	}
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil || len(body) == 0 {
 		http.Error(w, "Empty body", http.StatusBadRequest)
@@ -54,11 +48,6 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 
 // RedirectToOriginal обрабатывает GET /{id}.
 func (h *URLHandler) RedirectToOriginal(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Only GET allowed", http.StatusBadRequest)
-		return
-	}
-
 	// Попытка получить ID из параметра chi (если используется роутер)
 	id := chi.URLParam(r, "id")
 	// Если параметр пуст (тесты, прямой вызов), берём из пути
