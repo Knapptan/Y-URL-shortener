@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -8,21 +9,22 @@ import (
 	"testing"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/config"
+	"github.com/Knapptan/Y-URL-shortener/internal/model"
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
 	"github.com/stretchr/testify/assert"
 )
 
-// mockRepo — реализация интерфейса repository.URLRepository для тестов
+// mockRepo реализует repository.URLRepository для тестов
 type mockRepo struct {
-	saveFunc func(string) (string, error)
-	getFunc  func(string) (string, bool)
+	saveFunc func(string, model.URLRecord) error
+	getFunc  func(string) (model.URLRecord, bool)
 }
 
-func (m *mockRepo) Save(originalURL string) (string, error) {
-	return m.saveFunc(originalURL)
+func (m *mockRepo) Save(id string, record model.URLRecord) error {
+	return m.saveFunc(id, record)
 }
 
-func (m *mockRepo) Get(id string) (string, bool) {
+func (m *mockRepo) Get(id string) (model.URLRecord, bool) {
 	return m.getFunc(id)
 }
 
@@ -31,25 +33,26 @@ func TestHandler_CreateShortURL(t *testing.T) {
 		name           string
 		method         string
 		body           string
-		mockSave       func(string) (string, error)
+		mockSave       func(string, model.URLRecord) error
 		expectedStatus int
-		expectedBody   string // проверяем частично, например, содержит ли http://localhost:8080/
+		expectedPrefix string // проверяем, что ответ начинается с этого
+		expectedBody   string // для других кейсов (не success)
 	}{
 		{
 			name:   "success",
 			method: http.MethodPost,
 			body:   "https://ya.ru",
-			mockSave: func(_ string) (string, error) {
-				return "abc123", nil
+			mockSave: func(_ string, _ model.URLRecord) error {
+				return nil
 			},
 			expectedStatus: http.StatusCreated,
-			expectedBody:   "http://localhost:8080/abc123",
+			expectedPrefix: config.DefaultBaseURL + "/",
 		},
 		{
 			name:           "empty body",
 			method:         http.MethodPost,
 			body:           "",
-			mockSave:       nil, // не будет вызван
+			mockSave:       nil,
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "Empty body\n",
 		},
@@ -57,8 +60,8 @@ func TestHandler_CreateShortURL(t *testing.T) {
 			name:   "repository error",
 			method: http.MethodPost,
 			body:   "https://ya.ru",
-			mockSave: func(_ string) (string, error) {
-				return "", errors.New("some error")
+			mockSave: func(_ string, _ model.URLRecord) error {
+				return errors.New("some error")
 			},
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "some error\n",
@@ -67,25 +70,27 @@ func TestHandler_CreateShortURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Собираем зависимости с моком
 			repo := &mockRepo{
 				saveFunc: tt.mockSave,
 			}
 			svc := service.NewURLService(repo)
 			h := NewURLHandler(svc, config.DefaultBaseURL)
 
-			// Создаём запрос
 			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "text/plain")
 			w := httptest.NewRecorder()
 
-			// Вызываем хендлер
 			h.CreateShortURL(w, req)
 
-			// Проверяем статус
 			assert.Equal(t, tt.expectedStatus, w.Code)
 
-			// Проверяем тело (если не пустое ожидание)
+			if tt.expectedPrefix != "" {
+				body := w.Body.String()
+				assert.True(t, strings.HasPrefix(body, tt.expectedPrefix), "ответ должен начинаться с %s, получено %s", tt.expectedPrefix, body)
+				// Проверяем, что после префикса есть непустой ID
+				id := strings.TrimPrefix(body, tt.expectedPrefix)
+				assert.NotEmpty(t, id, "ID не должен быть пустым")
+			}
 			if tt.expectedBody != "" {
 				assert.Equal(t, tt.expectedBody, w.Body.String())
 			}
@@ -98,19 +103,19 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 		name           string
 		method         string
 		path           string
-		mockGet        func(string) (string, bool)
+		mockGet        func(string) (model.URLRecord, bool)
 		expectedStatus int
-		expectedHeader map[string]string // для проверки Location
+		expectedHeader map[string]string
 	}{
 		{
 			name:   "success redirect",
 			method: http.MethodGet,
 			path:   "/abc123",
-			mockGet: func(id string) (string, bool) {
+			mockGet: func(id string) (model.URLRecord, bool) {
 				if id == "abc123" {
-					return "https://ya.ru", true
+					return model.URLRecord{OriginalURL: "https://ya.ru"}, true
 				}
-				return "", false
+				return model.URLRecord{}, false
 			},
 			expectedStatus: http.StatusTemporaryRedirect,
 			expectedHeader: map[string]string{"Location": "https://ya.ru"},
@@ -126,8 +131,8 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 			name:   "not found",
 			method: http.MethodGet,
 			path:   "/notfound",
-			mockGet: func(_ string) (string, bool) {
-				return "", false
+			mockGet: func(_ string) (model.URLRecord, bool) {
+				return model.URLRecord{}, false
 			},
 			expectedStatus: http.StatusBadRequest,
 		},
@@ -147,7 +152,6 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 			h.RedirectToOriginal(w, req)
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
-
 			for key, val := range tt.expectedHeader {
 				assert.Equal(t, val, w.Header().Get(key))
 			}
@@ -160,19 +164,21 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 		name           string
 		method         string
 		body           string
-		mockSave       func(string) (string, error)
+		mockSave       func(string, model.URLRecord) error
 		expectedStatus int
-		expectedBody   string // проверяем частично (например, {"result":"..."})
+		expectedBody   string
+		checkJSON      bool
 	}{
 		{
 			name:   "success",
 			method: http.MethodPost,
 			body:   `{"url":"https://ya.ru"}`,
-			mockSave: func(_ string) (string, error) {
-				return "abc123", nil
+			mockSave: func(_ string, _ model.URLRecord) error {
+				return nil
 			},
 			expectedStatus: http.StatusCreated,
-			expectedBody:   `{"result":"http://localhost:8080/abc123"}`,
+			// проверяем, что в ответе есть поле "result" с корректным URL
+			checkJSON: true,
 		},
 		{
 			name:           "empty url",
@@ -194,8 +200,8 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 			name:   "repository error",
 			method: http.MethodPost,
 			body:   `{"url":"https://ya.ru"}`,
-			mockSave: func(_ string) (string, error) {
-				return "", errors.New("some repo error")
+			mockSave: func(_ string, _ model.URLRecord) error {
+				return errors.New("some repo error")
 			},
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "some repo error\n",
@@ -224,9 +230,17 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 
 			h.CreateShortenJSON(w, req)
 
+			if tt.checkJSON {
+				var resp map[string]string
+				err := json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.NoError(t, err)
+				result, ok := resp["result"]
+				assert.True(t, ok, "поле result отсутствует")
+				assert.True(t, strings.HasPrefix(result, config.DefaultBaseURL+"/"), "неправильный формат URL")
+			}
+
 			assert.Equal(t, tt.expectedStatus, w.Code)
 			if tt.expectedBody != "" {
-				// Для JSON-ответов можно использовать assert.JSONEq, чтобы сравнивать без учёта пробелов
 				if strings.HasPrefix(tt.expectedBody, "{") {
 					assert.JSONEq(t, tt.expectedBody, w.Body.String())
 				} else {

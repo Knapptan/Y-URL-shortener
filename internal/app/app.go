@@ -20,8 +20,13 @@ func Run(cfg *config.Config) error {
 	logrus.SetFormatter(&logrus.TextFormatter{FullTimestamp: true})
 	logrus.Infof("Starting server on %s", cfg.ServerAddress)
 	logrus.SetOutput(os.Stdout)
-	// Инициализация зависимостей
-	repo := repository.NewInMemoryRepo()
+	logrus.Infof("Storage file: %s", cfg.FileStoragePath)
+
+	// Создаём репозиторий с файловым хранилищем
+	repo, err := repository.NewFileRepository(cfg.FileStoragePath)
+	if err != nil {
+		logrus.Fatalf("Failed to init storage: %v", err)
+	}
 	svc := service.NewURLService(repo)
 	h := handler.NewURLHandler(svc, cfg.BaseURL)
 
