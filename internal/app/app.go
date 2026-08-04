@@ -27,8 +27,9 @@ func Run(cfg *config.Config) error {
 
 	r := chi.NewRouter()
 
-	// Подключаем кастомный middleware логирования (на logrus)
+	// Подключаем middleware
 	r.Use(middleware.LoggingMiddleware)
+	r.Use(middleware.GzipMiddleware)
 
 	// Регистрируем маршруты
 	r.Post("/", h.CreateShortURL)
