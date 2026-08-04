@@ -154,3 +154,85 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 		})
 	}
 }
+
+func TestHandler_CreateShortenJSON(t *testing.T) {
+	tests := []struct {
+		name           string
+		method         string
+		body           string
+		mockSave       func(string) (string, error)
+		expectedStatus int
+		expectedBody   string // проверяем частично (например, {"result":"..."})
+	}{
+		{
+			name:   "success",
+			method: http.MethodPost,
+			body:   `{"url":"https://ya.ru"}`,
+			mockSave: func(_ string) (string, error) {
+				return "abc123", nil
+			},
+			expectedStatus: http.StatusCreated,
+			expectedBody:   `{"result":"http://localhost:8080/abc123"}`,
+		},
+		{
+			name:           "empty url",
+			method:         http.MethodPost,
+			body:           `{"url":""}`,
+			mockSave:       nil,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "URL is empty\n",
+		},
+		{
+			name:           "invalid json",
+			method:         http.MethodPost,
+			body:           `{"url": "missing quote}`,
+			mockSave:       nil,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Invalid JSON\n",
+		},
+		{
+			name:   "repository error",
+			method: http.MethodPost,
+			body:   `{"url":"https://ya.ru"}`,
+			mockSave: func(_ string) (string, error) {
+				return "", errors.New("some repo error")
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "some repo error\n",
+		},
+		{
+			name:           "method not allowed",
+			method:         http.MethodGet,
+			body:           "",
+			mockSave:       nil,
+			expectedStatus: http.StatusMethodNotAllowed,
+			expectedBody:   "Only POST allowed\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockRepo{
+				saveFunc: tt.mockSave,
+			}
+			svc := service.NewURLService(repo)
+			h := NewURLHandler(svc, config.DefaultBaseURL)
+
+			req := httptest.NewRequest(tt.method, "/api/shorten", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			h.CreateShortenJSON(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedBody != "" {
+				// Для JSON-ответов можно использовать assert.JSONEq, чтобы сравнивать без учёта пробелов
+				if strings.HasPrefix(tt.expectedBody, "{") {
+					assert.JSONEq(t, tt.expectedBody, w.Body.String())
+				} else {
+					assert.Equal(t, tt.expectedBody, w.Body.String())
+				}
+			}
+		})
+	}
+}

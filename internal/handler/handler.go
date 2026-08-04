@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -9,10 +10,20 @@ import (
 	"github.com/go-chi/chi"
 )
 
-// URLHandler содержит сервис и методы-обработчики.
+// URLHandler - содержит сервис и методы-обработчики.
 type URLHandler struct {
 	service *service.URLService
 	baseURL string // базовый адрес для формирования коротких URL
+}
+
+// shortenRequest - структура запроса.
+type shortenRequest struct {
+	URL string `json:"url"`
+}
+
+// shortenResponse - структура ответа.
+type shortenResponse struct {
+	Result string `json:"result"`
 }
 
 // NewURLHandler конструктор.
@@ -68,4 +79,45 @@ func (h *URLHandler) RedirectToOriginal(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
+}
+
+// CreateShortenJSON - обрабатывает POST /api/shorten.
+func (h *URLHandler) CreateShortenJSON(w http.ResponseWriter, r *http.Request) {
+	// Проверяем метод (хотя chi сам отфильтрует, но оставим для надёжности)
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Декодируем JSON
+	var req shortenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Валидация
+	if req.URL == "" {
+		http.Error(w, "URL is empty", http.StatusBadRequest)
+		return
+	}
+
+	// Вызываем сервис
+	id, err := h.service.Shorten(req.URL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Формируем ответ
+	resp := shortenResponse{
+		Result: h.baseURL + "/" + id,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated) // 201
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }

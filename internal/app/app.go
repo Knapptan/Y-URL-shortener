@@ -33,6 +33,7 @@ func Run(cfg *config.Config) error {
 	// Регистрируем маршруты
 	r.Post("/", h.CreateShortURL)
 	r.Get("/{id}", h.RedirectToOriginal)
+	r.Post("/api/shorten", h.CreateShortenJSON)
 
 	// Запуск сервера
 	return http.ListenAndServe(cfg.ServerAddress, r)
