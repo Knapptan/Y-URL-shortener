@@ -1,10 +1,9 @@
 package middleware
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 // responseWriter обёртка над http.ResponseWriter для захвата статуса и размера ответа.
@@ -31,7 +30,6 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 // LoggingMiddleware логирует запросы и ответы.
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logrus.Info("Middleware called for request")
 		start := time.Now()
 
 		// Оборачиваем ResponseWriter
@@ -46,12 +44,12 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 
 		// Логируем информацию
 		duration := time.Since(start)
-		logrus.WithFields(logrus.Fields{
-			"method":   r.Method,
-			"uri":      r.URL.Path,
-			"duration": duration,
-			"status":   rw.status,
-			"size":     rw.size,
-		}).Info("HTTP request")
+		slog.Info("HTTP request",
+			"method", r.Method,
+			"uri", r.URL.Path,
+			"duration", duration,
+			"status", rw.status,
+			"size", rw.size,
+		)
 	})
 }

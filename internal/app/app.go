@@ -1,11 +1,11 @@
 package app
 
 import (
+	"log/slog"
 	"net/http"
 	"os"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/sirupsen/logrus"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/config"
 	"github.com/Knapptan/Y-URL-shortener/internal/handler"
@@ -17,15 +17,13 @@ import (
 // Run запускает HTTP-сервер с заданной конфигурацией.
 func Run(cfg *config.Config) error {
 	// Настройка логгера
-	logrus.SetFormatter(&logrus.TextFormatter{FullTimestamp: true})
-	logrus.Infof("Starting server on %s", cfg.ServerAddress)
-	logrus.SetOutput(os.Stdout)
-	logrus.Infof("Storage file: %s", cfg.FileStoragePath)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	// Создаём репозиторий с файловым хранилищем
 	repo, err := repository.NewFileRepository(cfg.FileStoragePath)
 	if err != nil {
-		logrus.Fatalf("Failed to init storage: %v", err)
+		slog.Error("Failed to init storage", "error", err)
+		return err // Если repo не удалось проинициализировать
 	}
 	svc := service.NewURLService(repo)
 	h := handler.NewURLHandler(svc, cfg.BaseURL)

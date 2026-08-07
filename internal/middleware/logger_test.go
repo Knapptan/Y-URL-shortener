@@ -1,17 +1,18 @@
 package middleware
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestLoggingMiddleware(t *testing.T) {
 	// Отключаем вывод логов для чистоты тестов
-	logrus.SetLevel(logrus.PanicLevel)
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	tests := []struct {
 		name           string

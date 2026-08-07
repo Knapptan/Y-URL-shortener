@@ -1,13 +1,15 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 )
 
 // URLHandler - содержит сервис и методы-обработчики.
@@ -114,10 +116,20 @@ func (h *URLHandler) CreateShortenJSON(w http.ResponseWriter, r *http.Request) {
 		Result: h.baseURL + "/" + id,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated) // 201
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	// Кодируем в буфер
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	if err := encoder.Encode(resp); err != nil {
+		// Если не удалось закодировать даже в память – ошибка сервера
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
+	}
+
+	// Теперь отправляем заголовки и тело
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		// ошибка записи клиенту – можем только залогировать
+		slog.Error("Failed to write response", "error", err)
 	}
 }

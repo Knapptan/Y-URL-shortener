@@ -3,6 +3,7 @@ package middleware
 import (
 	"compress/gzip"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -20,10 +21,11 @@ func shouldCompress(contentType string) bool {
 // GzipMiddleware реализует middleware для поддержки сжатия gzip.
 func GzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Распаковка запроса
+		// Распаковка тела запроса
 		if strings.Contains(r.Header.Get("Content-Encoding"), "gzip") {
 			gzReader, err := gzip.NewReader(r.Body)
 			if err != nil {
+				slog.Error("Failed to create gzip reader", "error", err)
 				http.Error(w, "Failed to decompress request body", http.StatusBadRequest)
 				return
 			}
@@ -42,7 +44,7 @@ func GzipMiddleware(next http.Handler) http.Handler {
 			ResponseWriter: w,
 			origWriter:     w,
 		}
-		defer gzw.Close() // закроем gz, если он был создан
+		defer gzw.Close()
 
 		next.ServeHTTP(gzw, r)
 	})
