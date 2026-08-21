@@ -13,4 +13,5 @@ type URLRepository interface {
 	Save(id string, record model.URLRecord) error
 	Get(id string) (model.URLRecord, bool)
 	SaveBatch(batch map[string]model.URLRecord) error
+	GetByOriginalURL(originalURL string) (string, model.URLRecord, bool) // обязательно
 }

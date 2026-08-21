@@ -10,21 +10,25 @@ import (
 	"github.com/Knapptan/Y-URL-shortener/internal/repository"
 )
 
+// URLService предоставляет методы для сокращения и получения URL.
 type URLService struct {
 	repo    repository.URLRepository
 	baseURL string
 }
 
+// BatchItem представляет один элемент для пакетного сокращения.
 type BatchItem struct {
 	CorrelationID string
 	OriginalURL   string
 }
 
+// BatchResult представляет результат обработки одного элемента пакетного запроса.
 type BatchResult struct {
 	CorrelationID string
 	ShortURL      string
 }
 
+// NewURLService создаёт новый экземпляр URLService.
 func NewURLService(repo repository.URLRepository, baseURL string) *URLService {
 	return &URLService{repo: repo, baseURL: baseURL}
 }
@@ -38,32 +42,31 @@ func (s *URLService) generateShortID() (string, error) {
 	return base64.URLEncoding.EncodeToString(b)[:8], nil
 }
 
-func (s *URLService) Shorten(originalURL string) (string, error) {
+// Shorten обрабатывает запрос на сокращение одного URL.
+func (s *URLService) Shorten(originalURL string) (string, bool, error) {
 	originalURL = strings.TrimSpace(originalURL)
 	if originalURL == "" {
-		return "", errors.New("empty URL")
+		return "", false, errors.New("empty URL")
 	}
 
-	var id string
-	var err error
-	for {
-		id, err = s.generateShortID()
-		if err != nil {
-			return "", err
-		}
-		record := model.URLRecord{OriginalURL: originalURL}
-		err = s.repo.Save(id, record)
-		if err == nil {
-			break
-		}
-		if err != repository.ErrIDExists {
-			return "", err
-		}
-		// если ID занят, пробуем сгенерировать новый
+	// Проверяем существование
+	if existingID, _, ok := s.repo.GetByOriginalURL(originalURL); ok {
+		return existingID, true, nil
 	}
-	return id, nil
+
+	// Генерируем новый ID
+	id, err := s.generateShortID()
+	if err != nil {
+		return "", false, err
+	}
+	record := model.URLRecord{OriginalURL: originalURL}
+	if err := s.repo.Save(id, record); err != nil {
+		return "", false, err
+	}
+	return id, false, nil
 }
 
+// GetOriginal возвращает оригинальный URL по его короткому ID.
 func (s *URLService) GetOriginal(id string) (string, bool) {
 	if id == "" {
 		return "", false
@@ -75,6 +78,7 @@ func (s *URLService) GetOriginal(id string) (string, bool) {
 	return record.OriginalURL, true
 }
 
+// ShortenBatch обрабатывает пакетный запрос на сокращение нескольких URL.
 func (s *URLService) ShortenBatch(items []BatchItem) ([]BatchResult, error) {
 	if len(items) == 0 {
 		return nil, errors.New("empty batch")
@@ -86,7 +90,7 @@ func (s *URLService) ShortenBatch(items []BatchItem) ([]BatchResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		// возможно, нужно проверять коллизию здесь? Оставим репозиторию.
+
 		batch[id] = model.URLRecord{OriginalURL: item.OriginalURL}
 		results = append(results, BatchResult{
 			CorrelationID: item.CorrelationID,

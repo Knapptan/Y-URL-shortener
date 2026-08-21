@@ -55,12 +55,18 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 	originalURL := string(body)
 
-	id, err := h.service.Shorten(originalURL)
+	id, exists, err := h.service.Shorten(originalURL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
+	if exists {
+		// Возвращаем 409 Conflict с уже существующим URL
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusConflict)
+		w.Write([]byte(h.baseURL + "/" + id))
+		return
+	}
 	// формируем полную короткую ссылку
 	shortURL := h.baseURL + "/" + id
 
@@ -115,9 +121,18 @@ func (h *URLHandler) CreateShortenJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Вызываем сервис
-	id, err := h.service.Shorten(req.URL)
+	id, exists, err := h.service.Shorten(req.URL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if exists {
+		resp := shortenResponse{Result: h.baseURL + "/" + id}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			slog.Error("Failed to encode response", "error", err)
+		}
 		return
 	}
 

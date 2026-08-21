@@ -35,7 +35,7 @@ func TestFileRepository(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "https://ya.ru", rec.OriginalURL)
 
-	// Сохраняем ещё одну запись, проверяем перезапись
+	// Сохраняем ещё одну запись
 	err = repo2.Save("def", model.URLRecord{OriginalURL: "https://google.com"})
 	require.NoError(t, err)
 
@@ -43,4 +43,23 @@ func TestFileRepository(t *testing.T) {
 	rec, ok = repo2.Get("abc")
 	assert.True(t, ok)
 	assert.Equal(t, "https://ya.ru", rec.OriginalURL)
+
+	// Тестирование GetByOriginalURL
+	t.Run("GetByOriginalURL", func(t *testing.T) {
+		// Существующий URL
+		id, rec, ok := repo2.GetByOriginalURL("https://ya.ru")
+		assert.True(t, ok)
+		assert.Equal(t, "abc", id)
+		assert.Equal(t, "https://ya.ru", rec.OriginalURL)
+
+		// Другой существующий
+		id, rec, ok = repo2.GetByOriginalURL("https://google.com")
+		assert.True(t, ok)
+		assert.Equal(t, "def", id)
+		assert.Equal(t, "https://google.com", rec.OriginalURL)
+
+		// Несуществующий
+		_, _, ok = repo2.GetByOriginalURL("https://nonexistent.com")
+		assert.False(t, ok)
+	})
 }

@@ -8,12 +8,14 @@ import (
 	"github.com/Knapptan/Y-URL-shortener/internal/model"
 )
 
+// FileRepository реализует URLRepository с сохранением данных в файл в формате JSON.
 type FileRepository struct {
 	mu       sync.RWMutex
 	data     map[string]model.URLRecord
 	filePath string
 }
 
+// NewFileRepository создаёт новый экземпляр FileRepository.
 func NewFileRepository(filePath string) (*FileRepository, error) {
 	repo := &FileRepository{
 		data:     make(map[string]model.URLRecord),
@@ -25,7 +27,7 @@ func NewFileRepository(filePath string) (*FileRepository, error) {
 	return repo, nil
 }
 
-// load читает файл и наполняет data (захватывает Lock).
+// load загружает данные из файла в память.
 func (r *FileRepository) load() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -52,7 +54,7 @@ func (r *FileRepository) load() error {
 	return nil
 }
 
-// saveToFile записывает все данные в файл (БЕЗ блокировок – вызывать только при уже захваченном мьютексе).
+// saveToFile записывает все данные из памяти в файл.
 func (r *FileRepository) saveToFile() error {
 	var records []model.StorageRecord
 	for shortURL, rec := range r.data {
@@ -74,7 +76,7 @@ func (r *FileRepository) saveToFile() error {
 	return encoder.Encode(records)
 }
 
-// Save сохраняет новый URL и перезаписывает файл (захватывает Lock).
+// Save сохраняет запись по указанному ID.
 func (r *FileRepository) Save(id string, record model.URLRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -84,11 +86,10 @@ func (r *FileRepository) Save(id string, record model.URLRecord) error {
 	}
 	r.data[id] = record
 
-	// Сохраняем в файл (уже внутри Lock)
 	return r.saveToFile()
 }
 
-// Get возвращает запись по ID (захватывает RLock).
+// Get возвращает запись по ID и флаг её существования.
 func (r *FileRepository) Get(id string) (model.URLRecord, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -96,6 +97,7 @@ func (r *FileRepository) Get(id string) (model.URLRecord, bool) {
 	return rec, ok
 }
 
+// SaveBatch атомарно сохраняет несколько записей из мапы batch.
 func (r *FileRepository) SaveBatch(batch map[string]model.URLRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -108,4 +110,16 @@ func (r *FileRepository) SaveBatch(batch map[string]model.URLRecord) error {
 		r.data[id] = rec
 	}
 	return r.saveToFile()
+}
+
+// GetByOriginalURL ищет запись по оригинальному URL.
+func (r *FileRepository) GetByOriginalURL(originalURL string) (string, model.URLRecord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for id, rec := range r.data {
+		if rec.OriginalURL == originalURL {
+			return id, rec, true
+		}
+	}
+	return "", model.URLRecord{}, false
 }

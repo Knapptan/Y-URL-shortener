@@ -21,7 +21,7 @@ func TestDBRepository(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	// Очищаем таблицу перед тестом (чтобы не мешали старые данные)
+	// Очищаем таблицу перед тестом
 	_, _ = db.Exec("DELETE FROM short_urls")
 
 	repo, err := NewDBRepository(db)
@@ -49,4 +49,27 @@ func TestDBRepository(t *testing.T) {
 	err = db.QueryRow("SELECT COUNT(*) FROM short_urls").Scan(&count)
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, count, 1)
+
+	// Тестирование GetByOriginalURL
+	t.Run("GetByOriginalURL", func(t *testing.T) {
+		// Существующий URL
+		id, rec, ok := repo.GetByOriginalURL("https://example.com")
+		assert.True(t, ok)
+		assert.Equal(t, "test123", id)
+		assert.Equal(t, "https://example.com", rec.OriginalURL)
+
+		// Сохраняем ещё один уникальный URL
+		err := repo.Save("test456", model.URLRecord{OriginalURL: "https://another.com"})
+		require.NoError(t, err)
+
+		// Проверяем поиск
+		id, rec, ok = repo.GetByOriginalURL("https://another.com")
+		assert.True(t, ok)
+		assert.Equal(t, "test456", id)
+		assert.Equal(t, "https://another.com", rec.OriginalURL)
+
+		// Несуществующий
+		_, _, ok = repo.GetByOriginalURL("https://nonexistent.com")
+		assert.False(t, ok)
+	})
 }
