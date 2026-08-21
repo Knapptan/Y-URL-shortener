@@ -2,14 +2,11 @@ package repository
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"sync"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/model"
 )
-
-var ErrIDExists = errors.New("ID already exists")
 
 type FileRepository struct {
 	mu       sync.RWMutex

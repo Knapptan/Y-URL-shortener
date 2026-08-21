@@ -1,0 +1,29 @@
+package repository
+
+import (
+	"testing"
+
+	"github.com/Knapptan/Y-URL-shortener/internal/model"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestInMemoryRepo(t *testing.T) {
+	repo := NewInMemoryRepo()
+
+	// Сохранение новой записи
+	err := repo.Save("abc123", model.URLRecord{OriginalURL: "https://ya.ru"})
+	assert.NoError(t, err)
+
+	// Попытка сохранить тот же ID – ошибка
+	err = repo.Save("abc123", model.URLRecord{OriginalURL: "https://google.com"})
+	assert.ErrorIs(t, err, ErrIDExists)
+
+	// Получение существующей записи
+	record, ok := repo.Get("abc123")
+	assert.True(t, ok)
+	assert.Equal(t, "https://ya.ru", record.OriginalURL)
+
+	// Получение отсутствующей записи
+	_, ok = repo.Get("notexist")
+	assert.False(t, ok)
+}
