@@ -7,7 +7,6 @@ import (
 
 	"github.com/Knapptan/Y-URL-shortener/internal/model"
 	"github.com/lib/pq"
-	_ "github.com/lib/pq"
 )
 
 // DBRepository реализует URLRepository для хранения данных в PostgreSQL.
