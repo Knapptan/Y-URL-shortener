@@ -1,18 +1,31 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 )
 
-// URLHandler содержит сервис и методы-обработчики.
+// URLHandler - содержит сервис и методы-обработчики.
 type URLHandler struct {
 	service *service.URLService
 	baseURL string // базовый адрес для формирования коротких URL
+}
+
+// shortenRequest - структура запроса.
+type shortenRequest struct {
+	URL string `json:"url"`
+}
+
+// shortenResponse - структура ответа.
+type shortenResponse struct {
+	Result string `json:"result"`
 }
 
 // NewURLHandler конструктор.
@@ -68,4 +81,55 @@ func (h *URLHandler) RedirectToOriginal(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
+}
+
+// CreateShortenJSON - обрабатывает POST /api/shorten.
+func (h *URLHandler) CreateShortenJSON(w http.ResponseWriter, r *http.Request) {
+	// Проверяем метод (хотя chi сам отфильтрует, но оставим для надёжности)
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Декодируем JSON
+	var req shortenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Валидация
+	if req.URL == "" {
+		http.Error(w, "URL is empty", http.StatusBadRequest)
+		return
+	}
+
+	// Вызываем сервис
+	id, err := h.service.Shorten(req.URL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Формируем ответ
+	resp := shortenResponse{
+		Result: h.baseURL + "/" + id,
+	}
+
+	// Кодируем в буфер
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	if err := encoder.Encode(resp); err != nil {
+		// Если не удалось закодировать даже в память – ошибка сервера
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Теперь отправляем заголовки и тело
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		// ошибка записи клиенту – можем только залогировать
+		slog.Error("Failed to write response", "error", err)
+	}
 }

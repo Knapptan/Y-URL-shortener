@@ -1,41 +1,65 @@
 package service
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"strings"
 
+	"github.com/Knapptan/Y-URL-shortener/internal/model"
 	"github.com/Knapptan/Y-URL-shortener/internal/repository"
 )
 
-// URLService обслуживает запросы на сокращение и получение URL
 type URLService struct {
 	repo repository.URLRepository
 }
 
-// NewURLService конструктор
 func NewURLService(repo repository.URLRepository) *URLService {
 	return &URLService{repo: repo}
 }
 
-// Shorten сохраняет URL и возвращает его короткий идентификатор
+// generateShortID генерирует случайный короткий ID длиной 8 символов.
+func (s *URLService) generateShortID() (string, error) {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(b)[:8], nil
+}
+
 func (s *URLService) Shorten(originalURL string) (string, error) {
-	// базовая валидация (можно расширить)
 	originalURL = strings.TrimSpace(originalURL)
 	if originalURL == "" {
 		return "", errors.New("empty URL")
 	}
-	// сохраняем
-	id, err := s.repo.Save(originalURL)
-	if err != nil {
-		return "", err
+
+	var id string
+	var err error
+	for {
+		id, err = s.generateShortID()
+		if err != nil {
+			return "", err
+		}
+		record := model.URLRecord{OriginalURL: originalURL}
+		err = s.repo.Save(id, record)
+		if err == nil {
+			break
+		}
+		if err != repository.ErrIDExists {
+			return "", err
+		}
+		// если ID занят, пробуем сгенерировать новый
 	}
 	return id, nil
 }
 
-// GetOriginal возвращает оригинальный URL по ID
 func (s *URLService) GetOriginal(id string) (string, bool) {
 	if id == "" {
 		return "", false
 	}
-	return s.repo.Get(id)
+	record, ok := s.repo.Get(id)
+	if !ok {
+		return "", false
+	}
+	return record.OriginalURL, true
 }

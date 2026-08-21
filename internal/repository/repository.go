@@ -4,12 +4,14 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"sync"
+
+	"github.com/Knapptan/Y-URL-shortener/internal/model"
 )
 
 // URLRepository интерфейс для работы с хранилищем URL.
 type URLRepository interface {
-	Save(originalURL string) (string, error) // сохраняет и возвращает ID
-	Get(id string) (string, bool)            // получает оригинальный URL по ID
+	Save(id string, record model.URLRecord) error
+	Get(id string) (model.URLRecord, bool)
 }
 
 // InMemoryRepo реализация в памяти.

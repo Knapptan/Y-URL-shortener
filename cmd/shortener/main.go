@@ -1,7 +1,8 @@
 package main
 
 import (
-	"log"
+	"log/slog"
+	"os"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/app"
 	"github.com/Knapptan/Y-URL-shortener/internal/config"
@@ -10,6 +11,7 @@ import (
 func main() {
 	cfg := config.ParseFlags()
 	if err := app.Run(cfg); err != nil {
-		log.Fatalf("Server failed: %v", err)
+		slog.Error("Server failed", "error", err)
+		os.Exit(1)
 	}
 }
