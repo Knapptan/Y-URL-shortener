@@ -69,7 +69,7 @@ func Run(cfg *config.Config) error {
 	}()
 
 	// Инициализация сервиса и хендлеров (как раньше)
-	svc := service.NewURLService(repo)
+	svc := service.NewURLService(repo, cfg.BaseURL)
 	h := handler.NewURLHandler(svc, cfg.BaseURL)
 	pingHandler := handler.NewPingHandler(db)
 
@@ -81,6 +81,7 @@ func Run(cfg *config.Config) error {
 	r.Post("/", h.CreateShortURL)
 	r.Get("/{id}", h.RedirectToOriginal)
 	r.Post("/api/shorten", h.CreateShortenJSON)
+	r.Post("/api/shorten/batch", h.CreateShortenBatch)
 
 	slog.Info("Starting server", "address", cfg.ServerAddress)
 	return http.ListenAndServe(cfg.ServerAddress, r)

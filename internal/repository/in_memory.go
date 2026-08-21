@@ -31,3 +31,19 @@ func (r *InMemoryRepo) Get(id string) (model.URLRecord, bool) {
 	rec, ok := r.data[id]
 	return rec, ok
 }
+
+func (r *InMemoryRepo) SaveBatch(batch map[string]model.URLRecord) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for id := range batch {
+		if _, exists := r.data[id]; exists {
+			return ErrIDExists
+		}
+	}
+	// Добавляем записи
+	for id, rec := range batch {
+		r.data[id] = rec
+	}
+	return nil
+}

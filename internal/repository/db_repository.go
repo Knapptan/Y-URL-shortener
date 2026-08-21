@@ -58,3 +58,29 @@ func (r *DBRepository) Get(id string) (model.URLRecord, bool) {
 	}
 	return model.URLRecord{OriginalURL: originalURL}, true
 }
+
+func (r *DBRepository) SaveBatch(batch map[string]model.URLRecord) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() // откат при ошибке
+
+	stmt, err := tx.Prepare("INSERT INTO short_urls (id, original_url) VALUES ($1, $2)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for id, rec := range batch {
+		_, err := stmt.Exec(id, rec.OriginalURL)
+		if err != nil {
+			// проверяем на дубликат (код 23505)
+			if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "23505" {
+				return ErrIDExists
+			}
+			return err
+		}
+	}
+	return tx.Commit()
+}

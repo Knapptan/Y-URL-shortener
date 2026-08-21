@@ -12,4 +12,5 @@ var ErrIDExists = errors.New("ID already exists")
 type URLRepository interface {
 	Save(id string, record model.URLRecord) error
 	Get(id string) (model.URLRecord, bool)
+	SaveBatch(batch map[string]model.URLRecord) error
 }

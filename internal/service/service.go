@@ -11,11 +11,22 @@ import (
 )
 
 type URLService struct {
-	repo repository.URLRepository
+	repo    repository.URLRepository
+	baseURL string
 }
 
-func NewURLService(repo repository.URLRepository) *URLService {
-	return &URLService{repo: repo}
+type BatchItem struct {
+	CorrelationID string
+	OriginalURL   string
+}
+
+type BatchResult struct {
+	CorrelationID string
+	ShortURL      string
+}
+
+func NewURLService(repo repository.URLRepository, baseURL string) *URLService {
+	return &URLService{repo: repo, baseURL: baseURL}
 }
 
 // generateShortID генерирует случайный короткий ID длиной 8 символов.
@@ -62,4 +73,28 @@ func (s *URLService) GetOriginal(id string) (string, bool) {
 		return "", false
 	}
 	return record.OriginalURL, true
+}
+
+func (s *URLService) ShortenBatch(items []BatchItem) ([]BatchResult, error) {
+	if len(items) == 0 {
+		return nil, errors.New("empty batch")
+	}
+	batch := make(map[string]model.URLRecord)
+	results := make([]BatchResult, 0, len(items))
+	for _, item := range items {
+		id, err := s.generateShortID()
+		if err != nil {
+			return nil, err
+		}
+		// возможно, нужно проверять коллизию здесь? Оставим репозиторию.
+		batch[id] = model.URLRecord{OriginalURL: item.OriginalURL}
+		results = append(results, BatchResult{
+			CorrelationID: item.CorrelationID,
+			ShortURL:      s.baseURL + "/" + id,
+		})
+	}
+	if err := s.repo.SaveBatch(batch); err != nil {
+		return nil, err
+	}
+	return results, nil
 }

@@ -28,6 +28,16 @@ type shortenResponse struct {
 	Result string `json:"result"`
 }
 
+type batchRequest struct {
+	CorrelationID string `json:"correlation_id"`
+	OriginalURL   string `json:"original_url"`
+}
+
+type batchResponse struct {
+	CorrelationID string `json:"correlation_id"`
+	ShortURL      string `json:"short_url"`
+}
+
 // NewURLHandler конструктор.
 func NewURLHandler(svc *service.URLService, baseURL string) *URLHandler {
 	return &URLHandler{
@@ -131,5 +141,53 @@ func (h *URLHandler) CreateShortenJSON(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(buf.Bytes()); err != nil {
 		// ошибка записи клиенту – можем только залогировать
 		slog.Error("Failed to write response", "error", err)
+	}
+}
+
+func (h *URLHandler) CreateShortenBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req []batchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(req) == 0 {
+		http.Error(w, "Empty batch", http.StatusBadRequest)
+		return
+	}
+
+	// Преобразуем в сервисные объекты
+	items := make([]service.BatchItem, len(req))
+	for i, v := range req {
+		items[i] = service.BatchItem{
+			CorrelationID: v.CorrelationID,
+			OriginalURL:   v.OriginalURL,
+		}
+	}
+
+	results, err := h.service.ShortenBatch(items)
+	if err != nil {
+		// Если конфликт ID, можно вернуть 409, но пока 400
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Формируем ответ
+	resp := make([]batchResponse, len(results))
+	for i, v := range results {
+		resp[i] = batchResponse{
+			CorrelationID: v.CorrelationID,
+			ShortURL:      v.ShortURL,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("Failed to encode response", "error", err)
 	}
 }

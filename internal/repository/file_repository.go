@@ -95,3 +95,17 @@ func (r *FileRepository) Get(id string) (model.URLRecord, bool) {
 	rec, ok := r.data[id]
 	return rec, ok
 }
+
+func (r *FileRepository) SaveBatch(batch map[string]model.URLRecord) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id := range batch {
+		if _, exists := r.data[id]; exists {
+			return ErrIDExists
+		}
+	}
+	for id, rec := range batch {
+		r.data[id] = rec
+	}
+	return r.saveToFile()
+}
