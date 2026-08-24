@@ -14,12 +14,16 @@ const (
 
 	EnvFileStoragePath     = "FILE_STORAGE_PATH"
 	DefaultFileStoragePath = "storage.json"
+
+	EnvDatabaseDSN     = "DATABASE_DSN"
+	DefaultDatabaseDSN = ""
 )
 
 type Config struct {
 	ServerAddress   string
 	BaseURL         string
 	FileStoragePath string
+	DatabaseDSN     string
 }
 
 // BuildConfig определяет конфигурацию на основе значений из флагов и переменных окружения.
@@ -33,7 +37,7 @@ func BuildConfig(flagServerAddress, flagBaseURL string) *Config {
 
 // resolveConfig определяет итоговые значения с учётом приоритета:
 // переменная окружения > переданный флаг > значение по умолчанию.
-func resolveConfig(flagServer, flagBase, envServer, envBase, flagFile, envFile string) *Config {
+func resolveConfig(flagServer, flagBase, envServer, envBase, flagFile, envFile, flagDSN, envDSN string) *Config {
 	server := flagServer
 	if envServer != "" {
 		server = envServer
@@ -49,10 +53,16 @@ func resolveConfig(flagServer, flagBase, envServer, envBase, flagFile, envFile s
 	if filePath == "" {
 		filePath = DefaultFileStoragePath
 	}
+	dsn := flagDSN
+	if envDSN != "" {
+		dsn = envDSN
+	}
+	// если dsn == "" – оставляем пустым
 	return &Config{
 		ServerAddress:   server,
 		BaseURL:         base,
 		FileStoragePath: filePath,
+		DatabaseDSN:     dsn,
 	}
 }
 
@@ -63,15 +73,18 @@ func ParseFlags() *Config {
 		serverAddress string
 		baseURL       string
 		filePath      string
+		databaseDSN   string
 	)
 	flag.StringVar(&serverAddress, "a", DefaultServerAddress, "address and port")
 	flag.StringVar(&baseURL, "b", DefaultBaseURL, "base URL")
 	flag.StringVar(&filePath, "f", DefaultFileStoragePath, "file path for storage")
+	flag.StringVar(&databaseDSN, "d", DefaultDatabaseDSN, "database DSN")
 	flag.Parse()
 
 	envServer := os.Getenv(EnvServerAddress)
 	envBase := os.Getenv(EnvBaseURL)
 	envFile := os.Getenv(EnvFileStoragePath)
+	envDSN := os.Getenv(EnvDatabaseDSN)
 
-	return resolveConfig(serverAddress, baseURL, envServer, envBase, filePath, envFile)
+	return resolveConfig(serverAddress, baseURL, envServer, envBase, filePath, envFile, databaseDSN, envDSN)
 }
