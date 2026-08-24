@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/lib/pq"
 
 	"github.com/go-chi/chi/v5"
@@ -35,6 +38,13 @@ func Run(cfg *config.Config) error {
 		}
 		if err := db.Ping(); err != nil {
 			slog.Error("Failed to ping DB", "error", err)
+			return err
+		}
+		m, err := migrate.New("file://migrations", cfg.DatabaseDSN)
+		if err != nil {
+			return err
+		}
+		if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 			return err
 		}
 		dbRepo, err := repository.NewDBRepository(db)

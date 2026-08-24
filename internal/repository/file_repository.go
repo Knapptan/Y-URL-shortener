@@ -90,11 +90,11 @@ func (r *FileRepository) Save(id string, record model.URLRecord) error {
 }
 
 // Get возвращает запись по ID и флаг её существования.
-func (r *FileRepository) Get(id string) (model.URLRecord, bool) {
+func (r *FileRepository) Get(id string) (model.URLRecord, bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	rec, ok := r.data[id]
-	return rec, ok
+	return rec, ok, nil
 }
 
 // SaveBatch атомарно сохраняет несколько записей из мапы batch.
@@ -113,13 +113,13 @@ func (r *FileRepository) SaveBatch(batch map[string]model.URLRecord) error {
 }
 
 // GetByOriginalURL ищет запись по оригинальному URL.
-func (r *FileRepository) GetByOriginalURL(originalURL string) (string, model.URLRecord, bool) {
+func (r *FileRepository) GetByOriginalURL(originalURL string) (string, model.URLRecord, bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for id, rec := range r.data {
 		if rec.OriginalURL == originalURL {
-			return id, rec, true
+			return id, rec, true, nil
 		}
 	}
-	return "", model.URLRecord{}, false
+	return "", model.URLRecord{}, false, nil
 }

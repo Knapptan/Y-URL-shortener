@@ -36,12 +36,14 @@ func TestDBRepository(t *testing.T) {
 	assert.ErrorIs(t, err, ErrIDExists)
 
 	// Получение существующей записи
-	record, ok := repo.Get("test123")
+	record, ok, err := repo.Get("test123")
+	assert.NoError(t, err)
 	assert.True(t, ok)
 	assert.Equal(t, "https://example.com", record.OriginalURL)
 
 	// Получение отсутствующей
-	_, ok = repo.Get("notexist")
+	_, ok, err = repo.Get("notexist")
+	assert.NoError(t, err)
 	assert.False(t, ok)
 
 	// Проверка миграции (таблица создана)
@@ -53,23 +55,26 @@ func TestDBRepository(t *testing.T) {
 	// Тестирование GetByOriginalURL
 	t.Run("GetByOriginalURL", func(t *testing.T) {
 		// Существующий URL
-		id, rec, ok := repo.GetByOriginalURL("https://example.com")
+		id, rec, ok, err := repo.GetByOriginalURL("https://example.com")
+		assert.NoError(t, err)
 		assert.True(t, ok)
 		assert.Equal(t, "test123", id)
 		assert.Equal(t, "https://example.com", rec.OriginalURL)
 
 		// Сохраняем ещё один уникальный URL
-		err := repo.Save("test456", model.URLRecord{OriginalURL: "https://another.com"})
+		err = repo.Save("test456", model.URLRecord{OriginalURL: "https://another.com"})
 		require.NoError(t, err)
 
 		// Проверяем поиск
-		id, rec, ok = repo.GetByOriginalURL("https://another.com")
+		id, rec, ok, err = repo.GetByOriginalURL("https://another.com")
+		assert.NoError(t, err)
 		assert.True(t, ok)
 		assert.Equal(t, "test456", id)
 		assert.Equal(t, "https://another.com", rec.OriginalURL)
 
 		// Несуществующий
-		_, _, ok = repo.GetByOriginalURL("https://nonexistent.com")
+		_, _, ok, err = repo.GetByOriginalURL("https://nonexistent.com")
+		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
 }

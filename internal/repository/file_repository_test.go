@@ -31,7 +31,8 @@ func TestFileRepository(t *testing.T) {
 	require.NoError(t, err)
 
 	// Проверяем, что данные восстановлены
-	rec, ok := repo2.Get("abc")
+	rec, ok, err := repo2.Get("abc")
+	require.NoError(t, err)
 	assert.True(t, ok)
 	assert.Equal(t, "https://ya.ru", rec.OriginalURL)
 
@@ -40,26 +41,30 @@ func TestFileRepository(t *testing.T) {
 	require.NoError(t, err)
 
 	// Проверяем, что старая запись осталась
-	rec, ok = repo2.Get("abc")
+	rec, ok, err = repo2.Get("abc")
+	require.NoError(t, err)
 	assert.True(t, ok)
 	assert.Equal(t, "https://ya.ru", rec.OriginalURL)
 
 	// Тестирование GetByOriginalURL
 	t.Run("GetByOriginalURL", func(t *testing.T) {
 		// Существующий URL
-		id, rec, ok := repo2.GetByOriginalURL("https://ya.ru")
+		id, rec, ok, err := repo2.GetByOriginalURL("https://ya.ru")
+		require.NoError(t, err)
 		assert.True(t, ok)
 		assert.Equal(t, "abc", id)
 		assert.Equal(t, "https://ya.ru", rec.OriginalURL)
 
 		// Другой существующий
-		id, rec, ok = repo2.GetByOriginalURL("https://google.com")
+		id, rec, ok, err = repo2.GetByOriginalURL("https://google.com")
+		require.NoError(t, err)
 		assert.True(t, ok)
 		assert.Equal(t, "def", id)
 		assert.Equal(t, "https://google.com", rec.OriginalURL)
 
 		// Несуществующий
-		_, _, ok = repo2.GetByOriginalURL("https://nonexistent.com")
+		_, _, ok, err = repo2.GetByOriginalURL("https://nonexistent.com")
+		require.NoError(t, err)
 		assert.False(t, ok)
 	})
 }

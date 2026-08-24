@@ -19,28 +19,33 @@ func TestInMemoryRepo(t *testing.T) {
 	assert.ErrorIs(t, err, ErrIDExists)
 
 	// Получение существующей записи
-	record, ok := repo.Get("abc123")
+	record, ok, err := repo.Get("abc123")
+	assert.NoError(t, err)
 	assert.True(t, ok)
 	assert.Equal(t, "https://ya.ru", record.OriginalURL)
 
 	// Получение отсутствующей
-	_, ok = repo.Get("notexist")
+	_, ok, err = repo.Get("notexist")
+	assert.NoError(t, err)
 	assert.False(t, ok)
 
 	// Тестирование GetByOriginalURL
 	t.Run("GetByOriginalURL", func(t *testing.T) {
 		// Существующий URL
-		id, rec, ok := repo.GetByOriginalURL("https://ya.ru")
+		id, rec, ok, err := repo.GetByOriginalURL("https://ya.ru")
+		assert.NoError(t, err)
 		assert.True(t, ok)
 		assert.Equal(t, "abc123", id)
 		assert.Equal(t, "https://ya.ru", rec.OriginalURL)
 
 		// Несуществующий URL
-		_, _, ok = repo.GetByOriginalURL("https://nonexistent.com")
+		_, _, ok, err = repo.GetByOriginalURL("https://nonexistent.com")
+		assert.NoError(t, err)
 		assert.False(t, ok)
 
 		// Пустая строка
-		_, _, ok = repo.GetByOriginalURL("")
+		_, _, ok, err = repo.GetByOriginalURL("")
+		assert.NoError(t, err)
 		assert.False(t, ok)
 	})
 }

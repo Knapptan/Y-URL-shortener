@@ -17,16 +17,16 @@ import (
 // mockRepo реализует repository.URLRepository для тестов
 type mockRepo struct {
 	saveFunc             func(string, model.URLRecord) error
-	getFunc              func(string) (model.URLRecord, bool)
+	getFunc              func(string) (model.URLRecord, bool, error)
 	saveBatchFunc        func(map[string]model.URLRecord) error
-	getByOriginalURLFunc func(string) (string, model.URLRecord, bool)
+	getByOriginalURLFunc func(string) (string, model.URLRecord, bool, error)
 }
 
 func (m *mockRepo) Save(id string, record model.URLRecord) error {
 	return m.saveFunc(id, record)
 }
 
-func (m *mockRepo) Get(id string) (model.URLRecord, bool) {
+func (m *mockRepo) Get(id string) (model.URLRecord, bool, error) {
 	return m.getFunc(id)
 }
 
@@ -34,11 +34,11 @@ func (m *mockRepo) SaveBatch(batch map[string]model.URLRecord) error {
 	return m.saveBatchFunc(batch)
 }
 
-func (m *mockRepo) GetByOriginalURL(originalURL string) (string, model.URLRecord, bool) {
+func (m *mockRepo) GetByOriginalURL(originalURL string) (string, model.URLRecord, bool, error) {
 	if m.getByOriginalURLFunc != nil {
 		return m.getByOriginalURLFunc(originalURL)
 	}
-	return "", model.URLRecord{}, false
+	return "", model.URLRecord{}, false, nil
 }
 
 func TestHandler_CreateShortURL(t *testing.T) {
@@ -47,7 +47,7 @@ func TestHandler_CreateShortURL(t *testing.T) {
 		method         string
 		body           string
 		mockSave       func(string, model.URLRecord) error
-		mockGetByURL   func(string) (string, model.URLRecord, bool)
+		mockGetByURL   func(string) (string, model.URLRecord, bool, error)
 		expectedStatus int
 		expectedPrefix string
 		expectedBody   string
@@ -59,8 +59,8 @@ func TestHandler_CreateShortURL(t *testing.T) {
 			mockSave: func(_ string, _ model.URLRecord) error {
 				return nil
 			},
-			mockGetByURL: func(_ string) (string, model.URLRecord, bool) {
-				return "", model.URLRecord{}, false
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "", model.URLRecord{}, false, nil
 			},
 			expectedStatus: http.StatusCreated,
 			expectedPrefix: config.DefaultBaseURL + "/",
@@ -81,8 +81,8 @@ func TestHandler_CreateShortURL(t *testing.T) {
 			mockSave: func(_ string, _ model.URLRecord) error {
 				return errors.New("some error")
 			},
-			mockGetByURL: func(_ string) (string, model.URLRecord, bool) {
-				return "", model.URLRecord{}, false
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "", model.URLRecord{}, false, nil
 			},
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "some error\n",
@@ -94,8 +94,8 @@ func TestHandler_CreateShortURL(t *testing.T) {
 			mockSave: func(_ string, _ model.URLRecord) error {
 				return nil
 			},
-			mockGetByURL: func(_ string) (string, model.URLRecord, bool) {
-				return "existingID", model.URLRecord{OriginalURL: "https://ya.ru"}, true
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "existingID", model.URLRecord{OriginalURL: "https://ya.ru"}, true, nil
 			},
 			expectedStatus: http.StatusConflict,
 			expectedBody:   config.DefaultBaseURL + "/existingID",
@@ -137,7 +137,7 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 		name           string
 		method         string
 		path           string
-		mockGet        func(string) (model.URLRecord, bool)
+		mockGet        func(string) (model.URLRecord, bool, error)
 		expectedStatus int
 		expectedHeader map[string]string
 	}{
@@ -145,11 +145,11 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 			name:   "success redirect",
 			method: http.MethodGet,
 			path:   "/abc123",
-			mockGet: func(id string) (model.URLRecord, bool) {
+			mockGet: func(id string) (model.URLRecord, bool, error) {
 				if id == "abc123" {
-					return model.URLRecord{OriginalURL: "https://ya.ru"}, true
+					return model.URLRecord{OriginalURL: "https://ya.ru"}, true, nil
 				}
-				return model.URLRecord{}, false
+				return model.URLRecord{}, false, nil
 			},
 			expectedStatus: http.StatusTemporaryRedirect,
 			expectedHeader: map[string]string{"Location": "https://ya.ru"},
@@ -165,8 +165,8 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 			name:   "not found",
 			method: http.MethodGet,
 			path:   "/notfound",
-			mockGet: func(_ string) (model.URLRecord, bool) {
-				return model.URLRecord{}, false
+			mockGet: func(_ string) (model.URLRecord, bool, error) {
+				return model.URLRecord{}, false, nil
 			},
 			expectedStatus: http.StatusBadRequest,
 		},
@@ -199,7 +199,7 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 		method         string
 		body           string
 		mockSave       func(string, model.URLRecord) error
-		mockGetByURL   func(string) (string, model.URLRecord, bool)
+		mockGetByURL   func(string) (string, model.URLRecord, bool, error)
 		expectedStatus int
 		expectedBody   string
 		checkJSON      bool
@@ -211,8 +211,8 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 			mockSave: func(_ string, _ model.URLRecord) error {
 				return nil
 			},
-			mockGetByURL: func(_ string) (string, model.URLRecord, bool) {
-				return "", model.URLRecord{}, false
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "", model.URLRecord{}, false, nil
 			},
 			expectedStatus: http.StatusCreated,
 			checkJSON:      true,
@@ -224,8 +224,8 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 			mockSave: func(_ string, _ model.URLRecord) error {
 				return nil
 			},
-			mockGetByURL: func(_ string) (string, model.URLRecord, bool) {
-				return "existingID", model.URLRecord{OriginalURL: "https://ya.ru"}, true
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "existingID", model.URLRecord{OriginalURL: "https://ya.ru"}, true, nil
 			},
 			expectedStatus: http.StatusConflict,
 			checkJSON:      true,
@@ -255,8 +255,8 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 			mockSave: func(_ string, _ model.URLRecord) error {
 				return errors.New("some repo error")
 			},
-			mockGetByURL: func(_ string) (string, model.URLRecord, bool) {
-				return "", model.URLRecord{}, false
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "", model.URLRecord{}, false, nil
 			},
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "some repo error\n",

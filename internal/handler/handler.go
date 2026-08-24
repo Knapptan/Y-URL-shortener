@@ -57,6 +57,7 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 
 	id, exists, err := h.service.Shorten(originalURL)
 	if err != nil {
+		slog.Error("Failed to shorten URL", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -89,7 +90,12 @@ func (h *URLHandler) RedirectToOriginal(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	originalURL, ok := h.service.GetOriginal(id)
+	originalURL, ok, err := h.service.GetOriginal(id)
+	if err != nil {
+		slog.Error("Failed to get original URL", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	if !ok {
 		http.Error(w, "URL not found", http.StatusBadRequest)
 		return
@@ -123,6 +129,7 @@ func (h *URLHandler) CreateShortenJSON(w http.ResponseWriter, r *http.Request) {
 	// Вызываем сервис
 	id, exists, err := h.service.Shorten(req.URL)
 	if err != nil {
+		slog.Error("Failed to shorten URL", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -186,7 +193,7 @@ func (h *URLHandler) CreateShortenBatch(w http.ResponseWriter, r *http.Request) 
 
 	results, err := h.service.ShortenBatch(items)
 	if err != nil {
-		// Если конфликт ID, можно вернуть 409, но пока 400
+		slog.Error("Failed to process batch", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
