@@ -5,13 +5,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/lib/pq"
-
-	"github.com/go-chi/chi/v5"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/config"
 	"github.com/Knapptan/Y-URL-shortener/internal/handler"
@@ -22,13 +22,11 @@ import (
 
 // Run запускает HTTP-сервер с заданной конфигурацией.
 func Run(cfg *config.Config) error {
-	// Настройка логгера
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	var repo repository.URLRepository
 	var db *sql.DB
 
-	// 1. Если задан DSN – используем БД
 	if cfg.DatabaseDSN != "" {
 		var err error
 		db, err = sql.Open("postgres", cfg.DatabaseDSN)
@@ -40,11 +38,17 @@ func Run(cfg *config.Config) error {
 			slog.Error("Failed to ping DB", "error", err)
 			return err
 		}
-		m, err := migrate.New("file://migrations", cfg.DatabaseDSN)
+		cwd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
+		m, err := migrate.New("file://"+filepath.Join(cwd, "migrations"), cfg.DatabaseDSN)
+		if err != nil {
+			slog.Error("Failed to init migrations", "error", err)
+			return err
+		}
 		if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+			slog.Error("Failed to apply migrations", "error", err)
 			return err
 		}
 		dbRepo, err := repository.NewDBRepository(db)
@@ -55,7 +59,6 @@ func Run(cfg *config.Config) error {
 		repo = dbRepo
 		slog.Info("Using PostgreSQL storage")
 	} else if cfg.FileStoragePath != "" {
-		// 2. Иначе если есть путь к файлу – используем файл
 		fileRepo, err := repository.NewFileRepository(cfg.FileStoragePath)
 		if err != nil {
 			slog.Error("Failed to init file storage", "error", err)
@@ -64,12 +67,10 @@ func Run(cfg *config.Config) error {
 		repo = fileRepo
 		slog.Info("Using file storage", "path", cfg.FileStoragePath)
 	} else {
-		// 3. Иначе – in‑memory
 		repo = repository.NewInMemoryRepo()
-		slog.Info("Using in‑memory storage")
+		slog.Info("Using in-memory storage")
 	}
 
-	// Закрываем БД при завершении (если она была открыта)
 	defer func() {
 		if db != nil {
 			if err := db.Close(); err != nil {
@@ -78,12 +79,12 @@ func Run(cfg *config.Config) error {
 		}
 	}()
 
-	// Инициализация сервиса и хендлеров (как раньше)
 	svc := service.NewURLService(repo, cfg.BaseURL)
 	h := handler.NewURLHandler(svc, cfg.BaseURL)
 	pingHandler := handler.NewPingHandler(db)
 
 	r := chi.NewRouter()
+	r.Use(middleware.AuthMiddleware(cfg.SecretKey))
 	r.Use(middleware.LoggingMiddleware)
 	r.Use(middleware.GzipMiddleware)
 
@@ -92,6 +93,8 @@ func Run(cfg *config.Config) error {
 	r.Get("/{id}", h.RedirectToOriginal)
 	r.Post("/api/shorten", h.CreateShortenJSON)
 	r.Post("/api/shorten/batch", h.CreateShortenBatch)
+	r.Get("/api/user/urls", h.GetUserURLs)
+	r.Delete("/api/user/urls", h.DeleteUserURLs)
 
 	slog.Info("Starting server", "address", cfg.ServerAddress)
 	return http.ListenAndServe(cfg.ServerAddress, r)
