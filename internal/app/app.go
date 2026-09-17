@@ -20,7 +20,7 @@ import (
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
 )
 
-// Run запускает HTTP-сервер с заданной конфигурацией.
+// Run запускает HTTP-сервер.
 func Run(cfg *config.Config) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
@@ -90,11 +90,13 @@ func Run(cfg *config.Config) error {
 
 	r.Get("/ping", pingHandler.Ping)
 	r.Post("/", h.CreateShortURL)
-	r.Get("/{id}", h.RedirectToOriginal)
 	r.Post("/api/shorten", h.CreateShortenJSON)
 	r.Post("/api/shorten/batch", h.CreateShortenBatch)
+	r.Post("/api/shorten/async", h.AsyncShorten)
+	r.Get("/api/shorten/result/{correlation_id}", h.GetAsyncResult)
 	r.Get("/api/user/urls", h.GetUserURLs)
 	r.Delete("/api/user/urls", h.DeleteUserURLs)
+	r.Get("/{id}", h.RedirectToOriginal)
 
 	slog.Info("Starting server", "address", cfg.ServerAddress)
 	return http.ListenAndServe(cfg.ServerAddress, r)

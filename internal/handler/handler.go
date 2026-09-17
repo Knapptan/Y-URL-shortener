@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/middleware"
+	"github.com/Knapptan/Y-URL-shortener/internal/model"
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
 	"github.com/go-chi/chi/v5"
 )
@@ -42,12 +43,29 @@ type userURLResponse struct {
 	OriginalURL string `json:"original_url"`
 }
 
+// --- Async-структуры ---
+
+type asyncShortenRequest struct {
+	URL           string `json:"url"`
+	CorrelationID string `json:"correlation_id"`
+}
+
+type asyncShortenResponse struct {
+	CorrelationID string              `json:"correlation_id"`
+	Status        string              `json:"status"`
+	Result        *asyncShortenResult `json:"result,omitempty"`
+	Error         string              `json:"error,omitempty"`
+}
+
+type asyncShortenResult struct {
+	ShortURL string `json:"short_url"`
+}
+
 // NewURLHandler создаёт новый обработчик.
 func NewURLHandler(svc *service.URLService, baseURL string) *URLHandler {
 	return &URLHandler{service: svc, baseURL: baseURL}
 }
 
-// getUserID извлекает userID из контекста.
 func getUserID(r *http.Request) (string, bool) {
 	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
 	return userID, ok && userID != ""
@@ -60,7 +78,6 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Empty body", http.StatusBadRequest)
 		return
 	}
-
 	userID, ok := getUserID(r)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -73,15 +90,12 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if exists {
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusConflict)
-		w.Write([]byte(h.baseURL + "/" + id))
-		return
-	}
-
 	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusCreated)
+	if exists {
+		w.WriteHeader(http.StatusConflict)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
 	w.Write([]byte(h.baseURL + "/" + id))
 }
 
@@ -141,7 +155,6 @@ func (h *URLHandler) CreateShortenJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := shortenResponse{Result: h.baseURL + "/" + id}
-
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(resp); err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -265,4 +278,104 @@ func (h *URLHandler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// ==================== Асинхронное сокращение ====================
+
+// AsyncShorten обрабатывает POST /api/shorten/async.
+func (h *URLHandler) AsyncShorten(w http.ResponseWriter, r *http.Request) {
+	userID, ok := getUserID(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req asyncShortenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.URL == "" {
+		http.Error(w, "URL is required", http.StatusBadRequest)
+		return
+	}
+	if req.CorrelationID == "" {
+		http.Error(w, "correlation_id is required", http.StatusBadRequest)
+		return
+	}
+
+	job, alreadyExists, err := h.service.AsyncShorten(req.URL, req.CorrelationID, userID)
+	if err != nil {
+		slog.Error("Async shorten failed", "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp := asyncShortenResponse{
+		CorrelationID: job.CorrelationID,
+		Status:        string(job.Status),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if alreadyExists {
+		resp.Result = &asyncShortenResult{ShortURL: job.ShortURL}
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusAccepted)
+	}
+
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("Failed to encode response", "error", err)
+	}
+}
+
+// GetAsyncResult обрабатывает GET /api/shorten/result/{correlation_id}.
+func (h *URLHandler) GetAsyncResult(w http.ResponseWriter, r *http.Request) {
+	userID, ok := getUserID(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	correlationID := chi.URLParam(r, "correlation_id")
+	if correlationID == "" {
+		http.Error(w, "correlation_id is required", http.StatusBadRequest)
+		return
+	}
+
+	job, ok := h.service.GetAsyncJob(correlationID)
+	if !ok {
+		http.Error(w, "correlation_id not found", http.StatusNotFound)
+		return
+	}
+
+	// Проверяем, что задачу запрашивает её владелец.
+	if job.UserID != userID {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	resp := asyncShortenResponse{
+		CorrelationID: job.CorrelationID,
+		Status:        string(job.Status),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if job.Status == model.JobStatusCompleted {
+		if job.Error != "" {
+			resp.Error = job.Error
+			w.WriteHeader(http.StatusInternalServerError)
+		} else {
+			resp.Result = &asyncShortenResult{ShortURL: job.ShortURL}
+			w.WriteHeader(http.StatusOK)
+		}
+	} else {
+		w.WriteHeader(http.StatusAccepted)
+	}
+
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("Failed to encode response", "error", err)
+	}
 }

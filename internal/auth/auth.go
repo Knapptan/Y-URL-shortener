@@ -37,10 +37,11 @@ func VerifyUserID(signed, secret string) (string, error) {
 	if userID == "" {
 		return "", errors.New("empty user ID")
 	}
-	// Вычисляем ожидаемую подпись
+
 	h := hmac.New(sha256.New, []byte(secret))
 	h.Write([]byte(userID))
 	expected := base64.StdEncoding.EncodeToString(h.Sum(nil))
+
 	if !hmac.Equal([]byte(signature), []byte(expected)) {
 		return "", errors.New("invalid signature")
 	}
