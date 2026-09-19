@@ -8,32 +8,67 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Knapptan/Y-URL-shortener/internal/middleware"
+	"github.com/Knapptan/Y-URL-shortener/internal/model"
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
 	"github.com/go-chi/chi/v5"
 )
 
-// URLHandler - содержит сервис и методы-обработчики.
+// URLHandler содержит сервис и базовый URL.
 type URLHandler struct {
 	service *service.URLService
-	baseURL string // базовый адрес для формирования коротких URL
+	baseURL string
 }
 
-// shortenRequest - структура запроса.
 type shortenRequest struct {
 	URL string `json:"url"`
 }
 
-// shortenResponse - структура ответа.
 type shortenResponse struct {
 	Result string `json:"result"`
 }
 
-// NewURLHandler конструктор.
+type batchRequest struct {
+	CorrelationID string `json:"correlation_id"`
+	OriginalURL   string `json:"original_url"`
+}
+
+type batchResponse struct {
+	CorrelationID string `json:"correlation_id"`
+	ShortURL      string `json:"short_url"`
+}
+
+type userURLResponse struct {
+	ShortURL    string `json:"short_url"`
+	OriginalURL string `json:"original_url"`
+}
+
+// --- Async-структуры ---
+
+type asyncShortenRequest struct {
+	URL           string `json:"url"`
+	CorrelationID string `json:"correlation_id"`
+}
+
+type asyncShortenResponse struct {
+	CorrelationID string              `json:"correlation_id"`
+	Status        string              `json:"status"`
+	Result        *asyncShortenResult `json:"result,omitempty"`
+	Error         string              `json:"error,omitempty"`
+}
+
+type asyncShortenResult struct {
+	ShortURL string `json:"short_url"`
+}
+
+// NewURLHandler создаёт новый обработчик.
 func NewURLHandler(svc *service.URLService, baseURL string) *URLHandler {
-	return &URLHandler{
-		service: svc,
-		baseURL: baseURL,
-	}
+	return &URLHandler{service: svc, baseURL: baseURL}
+}
+
+func getUserID(r *http.Request) (string, bool) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
+	return userID, ok && userID != ""
 }
 
 // CreateShortURL обрабатывает POST /.
@@ -43,39 +78,50 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Empty body", http.StatusBadRequest)
 		return
 	}
-	originalURL := string(body)
-
-	id, err := h.service.Shorten(originalURL)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	userID, ok := getUserID(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	// формируем полную короткую ссылку
-	shortURL := h.baseURL + "/" + id
-
+	id, exists, err := h.service.Shorten(string(body), userID)
+	if err != nil {
+		slog.Error("Failed to shorten URL", "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusCreated) // 201
-	w.Write([]byte(shortURL))
+	if exists {
+		w.WriteHeader(http.StatusConflict)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
+	w.Write([]byte(h.baseURL + "/" + id))
 }
 
 // RedirectToOriginal обрабатывает GET /{id}.
 func (h *URLHandler) RedirectToOriginal(w http.ResponseWriter, r *http.Request) {
-	// Попытка получить ID из параметра chi (если используется роутер)
 	id := chi.URLParam(r, "id")
-	// Если параметр пуст (тесты, прямой вызов), берём из пути
 	if id == "" {
 		id = strings.TrimPrefix(r.URL.Path, "/")
 	}
-
 	if id == "" {
 		http.Error(w, "Missing ID", http.StatusBadRequest)
 		return
 	}
 
-	originalURL, ok := h.service.GetOriginal(id)
+	originalURL, ok, deleted, err := h.service.GetOriginal(id)
+	if err != nil {
+		slog.Error("Failed to get original URL", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	if !ok {
 		http.Error(w, "URL not found", http.StatusBadRequest)
+		return
+	}
+	if deleted {
+		http.Error(w, "Gone", http.StatusGone)
 		return
 	}
 
@@ -83,53 +129,253 @@ func (h *URLHandler) RedirectToOriginal(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
 
-// CreateShortenJSON - обрабатывает POST /api/shorten.
+// CreateShortenJSON обрабатывает POST /api/shorten.
 func (h *URLHandler) CreateShortenJSON(w http.ResponseWriter, r *http.Request) {
-	// Проверяем метод (хотя chi сам отфильтрует, но оставим для надёжности)
-	if r.Method != http.MethodPost {
-		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
+	userID, ok := getUserID(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	// Декодируем JSON
 	var req shortenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-
-	// Валидация
 	if req.URL == "" {
 		http.Error(w, "URL is empty", http.StatusBadRequest)
 		return
 	}
 
-	// Вызываем сервис
-	id, err := h.service.Shorten(req.URL)
+	id, exists, err := h.service.Shorten(req.URL, userID)
 	if err != nil {
+		slog.Error("Failed to shorten URL", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Формируем ответ
-	resp := shortenResponse{
-		Result: h.baseURL + "/" + id,
-	}
-
-	// Кодируем в буфер
+	resp := shortenResponse{Result: h.baseURL + "/" + id}
 	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	if err := encoder.Encode(resp); err != nil {
-		// Если не удалось закодировать даже в память – ошибка сервера
+	if err := json.NewEncoder(&buf).Encode(resp); err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	// Теперь отправляем заголовки и тело
+	w.Header().Set("Content-Type", "application/json")
+	if exists {
+		w.WriteHeader(http.StatusConflict)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		slog.Error("Failed to write response", "error", err)
+	}
+}
+
+// CreateShortenBatch обрабатывает POST /api/shorten/batch.
+func (h *URLHandler) CreateShortenBatch(w http.ResponseWriter, r *http.Request) {
+	userID, ok := getUserID(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req []batchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(req) == 0 {
+		http.Error(w, "Empty batch", http.StatusBadRequest)
+		return
+	}
+
+	items := make([]service.BatchItem, len(req))
+	for i, v := range req {
+		items[i] = service.BatchItem{
+			CorrelationID: v.CorrelationID,
+			OriginalURL:   v.OriginalURL,
+		}
+	}
+
+	results, err := h.service.ShortenBatch(items, userID)
+	if err != nil {
+		slog.Error("Failed to process batch", "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp := make([]batchResponse, len(results))
+	for i, v := range results {
+		resp[i] = batchResponse{
+			CorrelationID: v.CorrelationID,
+			ShortURL:      v.ShortURL,
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if _, err := w.Write(buf.Bytes()); err != nil {
-		// ошибка записи клиенту – можем только залогировать
-		slog.Error("Failed to write response", "error", err)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("Failed to encode response", "error", err)
+	}
+}
+
+// GetUserURLs обрабатывает GET /api/user/urls.
+func (h *URLHandler) GetUserURLs(w http.ResponseWriter, r *http.Request) {
+	userID, ok := getUserID(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	records, err := h.service.GetUserURLs(userID)
+	if err != nil {
+		slog.Error("Failed to get user URLs", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if len(records) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	resp := make([]userURLResponse, len(records))
+	for i, rec := range records {
+		resp[i] = userURLResponse{
+			ShortURL:    h.baseURL + "/" + rec.ID,
+			OriginalURL: rec.OriginalURL,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("Failed to encode response", "error", err)
+	}
+}
+
+// DeleteUserURLs обрабатывает DELETE /api/user/urls.
+func (h *URLHandler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
+	userID, ok := getUserID(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var ids []string
+	if err := json.NewDecoder(r.Body).Decode(&ids); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(ids) == 0 {
+		http.Error(w, "Empty IDs array", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.DeleteURLs(userID, ids); err != nil {
+		slog.Error("Failed to delete URLs", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// ==================== Асинхронное сокращение ====================
+
+// AsyncShorten обрабатывает POST /api/shorten/async.
+func (h *URLHandler) AsyncShorten(w http.ResponseWriter, r *http.Request) {
+	userID, ok := getUserID(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req asyncShortenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.URL == "" {
+		http.Error(w, "URL is required", http.StatusBadRequest)
+		return
+	}
+	if req.CorrelationID == "" {
+		http.Error(w, "correlation_id is required", http.StatusBadRequest)
+		return
+	}
+
+	job, alreadyExists, err := h.service.AsyncShorten(req.URL, req.CorrelationID, userID)
+	if err != nil {
+		slog.Error("Async shorten failed", "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp := asyncShortenResponse{
+		CorrelationID: job.CorrelationID,
+		Status:        string(job.Status),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if alreadyExists {
+		resp.Result = &asyncShortenResult{ShortURL: job.ShortURL}
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusAccepted)
+	}
+
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("Failed to encode response", "error", err)
+	}
+}
+
+// GetAsyncResult обрабатывает GET /api/shorten/result/{correlation_id}.
+func (h *URLHandler) GetAsyncResult(w http.ResponseWriter, r *http.Request) {
+	userID, ok := getUserID(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	correlationID := chi.URLParam(r, "correlation_id")
+	if correlationID == "" {
+		http.Error(w, "correlation_id is required", http.StatusBadRequest)
+		return
+	}
+
+	job, ok := h.service.GetAsyncJob(correlationID)
+	if !ok {
+		http.Error(w, "correlation_id not found", http.StatusNotFound)
+		return
+	}
+
+	// Проверяем, что задачу запрашивает её владелец.
+	if job.UserID != userID {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	resp := asyncShortenResponse{
+		CorrelationID: job.CorrelationID,
+		Status:        string(job.Status),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if job.Status == model.JobStatusCompleted {
+		if job.Error != "" {
+			resp.Error = job.Error
+			w.WriteHeader(http.StatusInternalServerError)
+		} else {
+			resp.Result = &asyncShortenResult{ShortURL: job.ShortURL}
+			w.WriteHeader(http.StatusOK)
+		}
+	} else {
+		w.WriteHeader(http.StatusAccepted)
+	}
+
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("Failed to encode response", "error", err)
 	}
 }

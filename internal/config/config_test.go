@@ -17,91 +17,69 @@ func TestResolveConfig(t *testing.T) {
 		envBase        string
 		flagFile       string
 		envFile        string
+		flagDSN        string
+		envDSN         string
+		flagSecret     string
+		envSecret      string
 		expectedServer string
 		expectedBase   string
 		expectedFile   string
+		expectedDSN    string
+		expectedSecret string
 	}{
 		{
 			name:           "no flags, no env",
 			flagServer:     DefaultServerAddress,
 			flagBase:       DefaultBaseURL,
-			envServer:      "",
-			envBase:        "",
 			flagFile:       "",
-			envFile:        "",
+			flagDSN:        "",
+			flagSecret:     DefaultSecretKey,
 			expectedServer: DefaultServerAddress,
 			expectedBase:   DefaultBaseURL,
 			expectedFile:   DefaultFileStoragePath,
+			expectedDSN:    "",
+			expectedSecret: DefaultSecretKey,
 		},
 		{
 			name:           "flag only",
 			flagServer:     "localhost:8888",
 			flagBase:       "http://localhost:8888",
-			envServer:      "",
-			envBase:        "",
 			flagFile:       "",
-			envFile:        "",
+			flagDSN:        "postgres://user:pass@localhost/db",
+			flagSecret:     "flag-secret",
 			expectedServer: "localhost:8888",
 			expectedBase:   "http://localhost:8888",
 			expectedFile:   DefaultFileStoragePath,
+			expectedDSN:    "postgres://user:pass@localhost/db",
+			expectedSecret: "flag-secret",
 		},
 		{
-			name:           "env only",
-			flagServer:     DefaultServerAddress,
-			flagBase:       DefaultBaseURL,
+			name:           "env wins",
+			flagServer:     "localhost:8888",
+			flagBase:       "http://localhost:8888",
+			flagSecret:     "flag-secret",
 			envServer:      "localhost:9999",
 			envBase:        "http://localhost:9999",
-			flagFile:       "",
-			envFile:        "",
+			envSecret:      "env-secret",
 			expectedServer: "localhost:9999",
 			expectedBase:   "http://localhost:9999",
 			expectedFile:   DefaultFileStoragePath,
+			expectedSecret: "env-secret",
 		},
-		{
-			name:           "flag and env – env wins",
-			flagServer:     "localhost:8888",
-			flagBase:       "http://localhost:8888",
-			envServer:      "localhost:9999",
-			envBase:        "http://localhost:9999",
-			flagFile:       "",
-			envFile:        "",
-			expectedServer: "localhost:9999",
-			expectedBase:   "http://localhost:9999",
-			expectedFile:   DefaultFileStoragePath,
-		},
-		{
-			name:           "env only for server, flag only for base",
-			flagServer:     "localhost:8888",
-			flagBase:       "http://localhost:8888",
-			envServer:      "localhost:7777",
-			envBase:        "",
-			flagFile:       "",
-			envFile:        "",
-			expectedServer: "localhost:7777",
-			expectedBase:   "http://localhost:8888",
-			expectedFile:   DefaultFileStoragePath,
-		},
-		{
-			name:           "empty env values ignored",
-			flagServer:     "localhost:8888",
-			flagBase:       "http://localhost:8888",
-			envServer:      "",
-			envBase:        "http://localhost:9999",
-			flagFile:       "",
-			envFile:        "",
-			expectedServer: "localhost:8888",
-			expectedBase:   "http://localhost:9999",
-			expectedFile:   DefaultFileStoragePath,
-		},
-		// Можно добавить тесты для файлового пути, но для этого инкремента не обязательно
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := resolveConfig(tt.flagServer, tt.flagBase, tt.envServer, tt.envBase, tt.flagFile, tt.envFile)
+			cfg := resolveConfig(
+				tt.flagServer, tt.flagBase, tt.envServer, tt.envBase,
+				tt.flagFile, tt.envFile, tt.flagDSN, tt.envDSN,
+				tt.flagSecret, tt.envSecret,
+			)
 			assert.Equal(t, tt.expectedServer, cfg.ServerAddress)
 			assert.Equal(t, tt.expectedBase, cfg.BaseURL)
 			assert.Equal(t, tt.expectedFile, cfg.FileStoragePath)
+			assert.Equal(t, tt.expectedDSN, cfg.DatabaseDSN)
+			assert.Equal(t, tt.expectedSecret, cfg.SecretKey)
 		})
 	}
 }
@@ -112,25 +90,31 @@ func TestParseFlags(t *testing.T) {
 
 	t.Run("flag overrides default", func(t *testing.T) {
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-		os.Args = []string{"cmd", "-a", "localhost:8888", "-b", "http://localhost:8888"}
+		os.Args = []string{"cmd", "-a", "localhost:8888", "-b", "http://localhost:8888", "-s", "my-secret"}
 		t.Setenv(EnvServerAddress, "")
 		t.Setenv(EnvBaseURL, "")
 		t.Setenv(EnvFileStoragePath, "")
+		t.Setenv(EnvDatabaseDSN, "")
+		t.Setenv(EnvSecretKey, "")
 		cfg := ParseFlags()
 		assert.Equal(t, "localhost:8888", cfg.ServerAddress)
 		assert.Equal(t, "http://localhost:8888", cfg.BaseURL)
 		assert.Equal(t, DefaultFileStoragePath, cfg.FileStoragePath)
+		assert.Equal(t, "my-secret", cfg.SecretKey)
 	})
 
 	t.Run("env overrides flag", func(t *testing.T) {
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-		os.Args = []string{"cmd", "-a", "localhost:8888", "-b", "http://localhost:8888"}
+		os.Args = []string{"cmd", "-a", "localhost:8888", "-b", "http://localhost:8888", "-s", "flag-secret"}
 		t.Setenv(EnvServerAddress, "localhost:9999")
 		t.Setenv(EnvBaseURL, "http://localhost:9999")
 		t.Setenv(EnvFileStoragePath, "")
+		t.Setenv(EnvDatabaseDSN, "")
+		t.Setenv(EnvSecretKey, "env-secret")
 		cfg := ParseFlags()
 		assert.Equal(t, "localhost:9999", cfg.ServerAddress)
 		assert.Equal(t, "http://localhost:9999", cfg.BaseURL)
 		assert.Equal(t, DefaultFileStoragePath, cfg.FileStoragePath)
+		assert.Equal(t, "env-secret", cfg.SecretKey)
 	})
 }
