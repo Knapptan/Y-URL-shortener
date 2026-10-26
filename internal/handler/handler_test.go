@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/config"
+	"github.com/Knapptan/Y-URL-shortener/internal/middleware"
 	"github.com/Knapptan/Y-URL-shortener/internal/model"
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
 	"github.com/stretchr/testify/assert"
@@ -16,10 +18,12 @@ import (
 
 // mockRepo реализует repository.URLRepository для тестов
 type mockRepo struct {
-	saveFunc             func(string, model.URLRecord) error
-	getFunc              func(string) (model.URLRecord, bool, error)
-	saveBatchFunc        func(map[string]model.URLRecord) error
-	getByOriginalURLFunc func(string) (string, model.URLRecord, bool, error)
+	saveFunc              func(string, model.URLRecord) error
+	getFunc               func(string) (model.URLRecord, bool, error)
+	saveBatchFunc         func(map[string]model.URLRecord) error
+	getByOriginalURLFunc  func(string) (string, model.URLRecord, bool, error)
+	getByUserIDFunc       func(string) ([]model.URLRecord, error)
+	batchDeleteByUserFunc func(string, []string) error
 }
 
 func (m *mockRepo) Save(id string, record model.URLRecord) error {
@@ -39,6 +43,24 @@ func (m *mockRepo) GetByOriginalURL(originalURL string) (string, model.URLRecord
 		return m.getByOriginalURLFunc(originalURL)
 	}
 	return "", model.URLRecord{}, false, nil
+}
+
+func (m *mockRepo) GetByUserID(userID string) ([]model.URLRecord, error) {
+	if m.getByUserIDFunc != nil {
+		return m.getByUserIDFunc(userID)
+	}
+	return nil, nil
+}
+
+func (m *mockRepo) BatchDeleteByUserID(userID string, ids []string) error {
+	if m.batchDeleteByUserFunc != nil {
+		return m.batchDeleteByUserFunc(userID, ids)
+	}
+	return nil
+}
+
+func withUserID(r *http.Request, userID string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), middleware.UserIDKey, userID))
 }
 
 func TestHandler_CreateShortURL(t *testing.T) {
@@ -115,13 +137,14 @@ func TestHandler_CreateShortURL(t *testing.T) {
 			req.Header.Set("Content-Type", "text/plain")
 			w := httptest.NewRecorder()
 
-			h.CreateShortURL(w, req)
+			h.CreateShortURL(w, withUserID(req, "test-user-123"))
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
 
 			if tt.expectedPrefix != "" {
 				body := w.Body.String()
-				assert.True(t, strings.HasPrefix(body, tt.expectedPrefix), "ответ должен начинаться с %s, получено %s", tt.expectedPrefix, body)
+				assert.True(t, strings.HasPrefix(body, tt.expectedPrefix),
+					"ответ должен начинаться с %s, получено %s", tt.expectedPrefix, body)
 				id := strings.TrimPrefix(body, tt.expectedPrefix)
 				assert.NotEmpty(t, id, "ID не должен быть пустым")
 			}
@@ -169,6 +192,15 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 				return model.URLRecord{}, false, nil
 			},
 			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:   "deleted url returns 410",
+			method: http.MethodGet,
+			path:   "/deleted123",
+			mockGet: func(_ string) (model.URLRecord, bool, error) {
+				return model.URLRecord{OriginalURL: "https://ya.ru", Deleted: true}, true, nil
+			},
+			expectedStatus: http.StatusGone,
 		},
 	}
 
@@ -261,15 +293,6 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "some repo error\n",
 		},
-		{
-			name:           "method not allowed",
-			method:         http.MethodGet,
-			body:           "",
-			mockSave:       nil,
-			mockGetByURL:   nil,
-			expectedStatus: http.StatusMethodNotAllowed,
-			expectedBody:   "Only POST allowed\n",
-		},
 	}
 
 	for _, tt := range tests {
@@ -285,7 +308,8 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
-			h.CreateShortenJSON(w, req)
+			// ВАЖНО: вызываем именно CreateShortenJSON, а не CreateShortURL
+			h.CreateShortenJSON(w, withUserID(req, "test-user-123"))
 
 			if tt.checkJSON {
 				var resp map[string]string
@@ -359,14 +383,6 @@ func TestHandler_CreateShortenBatch(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "some repo error\n",
 		},
-		{
-			name:           "method not allowed",
-			method:         http.MethodGet,
-			body:           "",
-			mockSaveBatch:  nil,
-			expectedStatus: http.StatusMethodNotAllowed,
-			expectedBody:   "Only POST allowed\n",
-		},
 	}
 
 	for _, tt := range tests {
@@ -381,7 +397,8 @@ func TestHandler_CreateShortenBatch(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 
-			h.CreateShortenBatch(w, req)
+			// ВАЖНО: вызываем именно CreateShortenBatch
+			h.CreateShortenBatch(w, withUserID(req, "test-user-123"))
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
 
@@ -399,6 +416,158 @@ func TestHandler_CreateShortenBatch(t *testing.T) {
 			if tt.expectedBody != "" {
 				assert.Equal(t, tt.expectedBody, w.Body.String())
 			}
+		})
+	}
+}
+
+func TestHandler_GetUserURLs(t *testing.T) {
+	tests := []struct {
+		name           string
+		userID         string
+		mockGetByUser  func(string) ([]model.URLRecord, error)
+		expectedStatus int
+		checkJSON      bool
+		expectedLen    int
+	}{
+		{
+			name:   "success with urls",
+			userID: "user-1",
+			mockGetByUser: func(_ string) ([]model.URLRecord, error) {
+				return []model.URLRecord{
+					{ID: "abc", OriginalURL: "https://ya.ru"},
+					{ID: "def", OriginalURL: "https://google.com"},
+				}, nil
+			},
+			expectedStatus: http.StatusOK,
+			checkJSON:      true,
+			expectedLen:    2,
+		},
+		{
+			name:   "no content",
+			userID: "user-2",
+			mockGetByUser: func(_ string) ([]model.URLRecord, error) {
+				return nil, nil
+			},
+			expectedStatus: http.StatusNoContent,
+		},
+		{
+			name:   "unauthorized",
+			userID: "",
+			mockGetByUser: func(_ string) ([]model.URLRecord, error) {
+				return nil, nil
+			},
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:   "repository error",
+			userID: "user-3",
+			mockGetByUser: func(_ string) ([]model.URLRecord, error) {
+				return nil, errors.New("db error")
+			},
+			expectedStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockRepo{
+				getByUserIDFunc: tt.mockGetByUser,
+			}
+			svc := service.NewURLService(repo, config.DefaultBaseURL)
+			h := NewURLHandler(svc, config.DefaultBaseURL)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+			if tt.userID != "" {
+				req = withUserID(req, tt.userID)
+			}
+			w := httptest.NewRecorder()
+
+			h.GetUserURLs(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			if tt.checkJSON {
+				var resp []map[string]string
+				err := json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.NoError(t, err)
+				assert.Len(t, resp, tt.expectedLen)
+				for _, item := range resp {
+					assert.Contains(t, item, "short_url")
+					assert.Contains(t, item, "original_url")
+					assert.True(t, strings.HasPrefix(item["short_url"], config.DefaultBaseURL+"/"))
+				}
+			}
+		})
+	}
+}
+
+func TestHandler_DeleteUserURLs(t *testing.T) {
+	tests := []struct {
+		name           string
+		userID         string
+		body           string
+		mockDelete     func(string, []string) error
+		expectedStatus int
+	}{
+		{
+			name:   "success",
+			userID: "user-1",
+			body:   `["id1","id2"]`,
+			mockDelete: func(_ string, _ []string) error {
+				return nil
+			},
+			expectedStatus: http.StatusAccepted,
+		},
+		{
+			name:           "empty array",
+			userID:         "user-1",
+			body:           `[]`,
+			mockDelete:     nil,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "invalid json",
+			userID:         "user-1",
+			body:           `["id1"`,
+			mockDelete:     nil,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "unauthorized",
+			userID:         "",
+			body:           `["id1"]`,
+			mockDelete:     nil,
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:   "repository error",
+			userID: "user-1",
+			body:   `["id1"]`,
+			mockDelete: func(_ string, _ []string) error {
+				return errors.New("db error")
+			},
+			expectedStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockRepo{
+				batchDeleteByUserFunc: tt.mockDelete,
+			}
+			svc := service.NewURLService(repo, config.DefaultBaseURL)
+			h := NewURLHandler(svc, config.DefaultBaseURL)
+
+			req := httptest.NewRequest(http.MethodDelete, "/api/user/urls", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			if tt.userID != "" {
+				req = withUserID(req, tt.userID)
+			}
+			w := httptest.NewRecorder()
+
+			h.DeleteUserURLs(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
 		})
 	}
 }

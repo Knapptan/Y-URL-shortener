@@ -8,14 +8,14 @@ import (
 	"github.com/Knapptan/Y-URL-shortener/internal/model"
 )
 
-// FileRepository реализует URLRepository с сохранением данных в файл в формате JSON.
+// FileRepository реализует URLRepository с сохранением в JSON-файл.
 type FileRepository struct {
 	mu       sync.RWMutex
 	data     map[string]model.URLRecord
 	filePath string
 }
 
-// NewFileRepository создаёт новый экземпляр FileRepository.
+// NewFileRepository создаёт репозиторий и загружает данные из файла.
 func NewFileRepository(filePath string) (*FileRepository, error) {
 	repo := &FileRepository{
 		data:     make(map[string]model.URLRecord),
@@ -27,7 +27,6 @@ func NewFileRepository(filePath string) (*FileRepository, error) {
 	return repo, nil
 }
 
-// load загружает данные из файла в память.
 func (r *FileRepository) load() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -35,7 +34,7 @@ func (r *FileRepository) load() error {
 	file, err := os.Open(r.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // файла нет – начинаем с пустой мапы
+			return nil
 		}
 		return err
 	}
@@ -45,16 +44,17 @@ func (r *FileRepository) load() error {
 	if err := json.NewDecoder(file).Decode(&records); err != nil {
 		return err
 	}
-
 	for _, rec := range records {
 		r.data[rec.ShortURL] = model.URLRecord{
+			ID:          rec.ShortURL,
 			OriginalURL: rec.OriginalURL,
+			UserID:      rec.UserID,
+			Deleted:     rec.Deleted,
 		}
 	}
 	return nil
 }
 
-// saveToFile записывает все данные из памяти в файл.
 func (r *FileRepository) saveToFile() error {
 	var records []model.StorageRecord
 	for shortURL, rec := range r.data {
@@ -62,6 +62,8 @@ func (r *FileRepository) saveToFile() error {
 			UUID:        shortURL,
 			ShortURL:    shortURL,
 			OriginalURL: rec.OriginalURL,
+			UserID:      rec.UserID,
+			Deleted:     rec.Deleted,
 		})
 	}
 
@@ -76,7 +78,7 @@ func (r *FileRepository) saveToFile() error {
 	return encoder.Encode(records)
 }
 
-// Save сохраняет запись по указанному ID.
+// Save сохраняет запись и перезаписывает файл.
 func (r *FileRepository) Save(id string, record model.URLRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -84,12 +86,12 @@ func (r *FileRepository) Save(id string, record model.URLRecord) error {
 	if _, exists := r.data[id]; exists {
 		return ErrIDExists
 	}
+	record.ID = id
 	r.data[id] = record
-
 	return r.saveToFile()
 }
 
-// Get возвращает запись по ID и флаг её существования.
+// Get возвращает запись по ID.
 func (r *FileRepository) Get(id string) (model.URLRecord, bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -97,16 +99,18 @@ func (r *FileRepository) Get(id string) (model.URLRecord, bool, error) {
 	return rec, ok, nil
 }
 
-// SaveBatch атомарно сохраняет несколько записей из мапы batch.
+// SaveBatch атомарно сохраняет несколько записей.
 func (r *FileRepository) SaveBatch(batch map[string]model.URLRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	for id := range batch {
 		if _, exists := r.data[id]; exists {
 			return ErrIDExists
 		}
 	}
 	for id, rec := range batch {
+		rec.ID = id
 		r.data[id] = rec
 	}
 	return r.saveToFile()
@@ -122,4 +126,32 @@ func (r *FileRepository) GetByOriginalURL(originalURL string) (string, model.URL
 		}
 	}
 	return "", model.URLRecord{}, false, nil
+}
+
+// GetByUserID возвращает все URL пользователя.
+func (r *FileRepository) GetByUserID(userID string) ([]model.URLRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var result []model.URLRecord
+	for _, rec := range r.data {
+		if rec.UserID == userID {
+			result = append(result, rec)
+		}
+	}
+	return result, nil
+}
+
+// BatchDeleteByUserID помечает URL пользователя как удалённые.
+func (r *FileRepository) BatchDeleteByUserID(userID string, ids []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, id := range ids {
+		if rec, ok := r.data[id]; ok && rec.UserID == userID {
+			rec.Deleted = true
+			r.data[id] = rec
+		}
+	}
+	return r.saveToFile()
 }

@@ -6,50 +6,57 @@ import (
 	"github.com/Knapptan/Y-URL-shortener/internal/model"
 )
 
-// InMemoryRepo реализует URLRepository для хранения данных в оперативной памяти.
+// InMemoryRepo реализует URLRepository в оперативной памяти.
 type InMemoryRepo struct {
-	mu   sync.RWMutex
-	data map[string]model.URLRecord
+	mu     sync.RWMutex
+	store  map[string]model.URLRecord // key = short ID
+	urlMap map[string]string          // key = originalURL, value = short ID
 }
 
-// NewInMemoryRepo создаёт новый экземпляр InMemoryRepo с инициализированной картой.
+// NewInMemoryRepo создаёт новое in-memory хранилище.
 func NewInMemoryRepo() *InMemoryRepo {
-	return &InMemoryRepo{data: make(map[string]model.URLRecord)}
+	return &InMemoryRepo{
+		store:  make(map[string]model.URLRecord),
+		urlMap: make(map[string]string),
+	}
 }
 
-// Save сохраняет URL-запись по заданному ID.
+// Save сохраняет запись.
 func (r *InMemoryRepo) Save(id string, record model.URLRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.data[id]; exists {
+
+	if _, exists := r.store[id]; exists {
 		return ErrIDExists
 	}
-	r.data[id] = record
+	record.ID = id
+	r.store[id] = record
+	r.urlMap[record.OriginalURL] = id
 	return nil
 }
 
-// Get возвращает запись по ID и флаг, указывающий на её существование.
+// Get возвращает запись по ID.
 func (r *InMemoryRepo) Get(id string) (model.URLRecord, bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	rec, ok := r.data[id]
+	rec, ok := r.store[id]
 	return rec, ok, nil
 }
 
-// SaveBatch атомарно сохраняет несколько записей из мапы batch.
+// SaveBatch атомарно сохраняет несколько записей.
 func (r *InMemoryRepo) SaveBatch(batch map[string]model.URLRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Проверяем, что все ID свободны
 	for id := range batch {
-		if _, exists := r.data[id]; exists {
+		if _, exists := r.store[id]; exists {
 			return ErrIDExists
 		}
 	}
-	// Записываем все записи
 	for id, rec := range batch {
-		r.data[id] = rec
+		rec.ID = id
+		r.store[id] = rec
+		r.urlMap[rec.OriginalURL] = id
 	}
 	return nil
 }
@@ -58,10 +65,37 @@ func (r *InMemoryRepo) SaveBatch(batch map[string]model.URLRecord) error {
 func (r *InMemoryRepo) GetByOriginalURL(originalURL string) (string, model.URLRecord, bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	for id, rec := range r.data {
-		if rec.OriginalURL == originalURL {
-			return id, rec, true, nil
+	id, ok := r.urlMap[originalURL]
+	if !ok {
+		return "", model.URLRecord{}, false, nil
+	}
+	return id, r.store[id], true, nil
+}
+
+// GetByUserID возвращает все URL пользователя.
+func (r *InMemoryRepo) GetByUserID(userID string) ([]model.URLRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var result []model.URLRecord
+	for _, rec := range r.store {
+		if rec.UserID == userID {
+			result = append(result, rec)
 		}
 	}
-	return "", model.URLRecord{}, false, nil
+	return result, nil
+}
+
+// BatchDeleteByUserID помечает URL пользователя как удалённые.
+func (r *InMemoryRepo) BatchDeleteByUserID(userID string, ids []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, id := range ids {
+		if rec, ok := r.store[id]; ok && rec.UserID == userID {
+			rec.Deleted = true
+			r.store[id] = rec
+		}
+	}
+	return nil
 }
