@@ -1,9 +1,15 @@
 package app
 
 import (
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"os"
+
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
+	_ "github.com/lib/pq"
 
 	"github.com/go-chi/chi/v5"
 
@@ -19,26 +25,74 @@ func Run(cfg *config.Config) error {
 	// Настройка логгера
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
-	// Создаём репозиторий с файловым хранилищем
-	repo, err := repository.NewFileRepository(cfg.FileStoragePath)
-	if err != nil {
-		slog.Error("Failed to init storage", "error", err)
-		return err // Если repo не удалось проинициализировать
+	var repo repository.URLRepository
+	var db *sql.DB
+
+	// 1. Если задан DSN – используем БД
+	if cfg.DatabaseDSN != "" {
+		var err error
+		db, err = sql.Open("postgres", cfg.DatabaseDSN)
+		if err != nil {
+			slog.Error("Failed to open DB", "error", err)
+			return err
+		}
+		if err := db.Ping(); err != nil {
+			slog.Error("Failed to ping DB", "error", err)
+			return err
+		}
+		m, err := migrate.New("file://migrations", cfg.DatabaseDSN)
+		if err != nil {
+			return err
+		}
+		if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+			return err
+		}
+		dbRepo, err := repository.NewDBRepository(db)
+		if err != nil {
+			slog.Error("Failed to init DB repository", "error", err)
+			return err
+		}
+		repo = dbRepo
+		slog.Info("Using PostgreSQL storage")
+	} else if cfg.FileStoragePath != "" {
+		// 2. Иначе если есть путь к файлу – используем файл
+		fileRepo, err := repository.NewFileRepository(cfg.FileStoragePath)
+		if err != nil {
+			slog.Error("Failed to init file storage", "error", err)
+			return err
+		}
+		repo = fileRepo
+		slog.Info("Using file storage", "path", cfg.FileStoragePath)
+	} else {
+		// 3. Иначе – in‑memory
+		repo = repository.NewInMemoryRepo()
+		slog.Info("Using in‑memory storage")
 	}
-	svc := service.NewURLService(repo)
+
+	// Закрываем БД при завершении (если она была открыта)
+	defer func() {
+		if db != nil {
+			if err := db.Close(); err != nil {
+				slog.Error("Failed to close DB", "error", err)
+			}
+		}
+	}()
+
+	// Инициализация сервиса и хендлеров (как раньше)
+	svc := service.NewURLService(repo, cfg.BaseURL)
 	h := handler.NewURLHandler(svc, cfg.BaseURL)
+	pingHandler := handler.NewPingHandler(db)
 
 	r := chi.NewRouter()
-
-	// Подключаем middleware
 	r.Use(middleware.LoggingMiddleware)
 	r.Use(middleware.GzipMiddleware)
 
-	// Регистрируем маршруты
+	r.Get("/ping", pingHandler.Ping)
 	r.Post("/", h.CreateShortURL)
 	r.Get("/{id}", h.RedirectToOriginal)
 	r.Post("/api/shorten", h.CreateShortenJSON)
+	r.Post("/api/shorten/batch", h.CreateShortenBatch)
 
-	// Запуск сервера
+	slog.Info("Starting server", "address", cfg.ServerAddress)
 	return http.ListenAndServe(cfg.ServerAddress, r)
 }

@@ -16,16 +16,29 @@ import (
 
 // mockRepo реализует repository.URLRepository для тестов
 type mockRepo struct {
-	saveFunc func(string, model.URLRecord) error
-	getFunc  func(string) (model.URLRecord, bool)
+	saveFunc             func(string, model.URLRecord) error
+	getFunc              func(string) (model.URLRecord, bool, error)
+	saveBatchFunc        func(map[string]model.URLRecord) error
+	getByOriginalURLFunc func(string) (string, model.URLRecord, bool, error)
 }
 
 func (m *mockRepo) Save(id string, record model.URLRecord) error {
 	return m.saveFunc(id, record)
 }
 
-func (m *mockRepo) Get(id string) (model.URLRecord, bool) {
+func (m *mockRepo) Get(id string) (model.URLRecord, bool, error) {
 	return m.getFunc(id)
+}
+
+func (m *mockRepo) SaveBatch(batch map[string]model.URLRecord) error {
+	return m.saveBatchFunc(batch)
+}
+
+func (m *mockRepo) GetByOriginalURL(originalURL string) (string, model.URLRecord, bool, error) {
+	if m.getByOriginalURLFunc != nil {
+		return m.getByOriginalURLFunc(originalURL)
+	}
+	return "", model.URLRecord{}, false, nil
 }
 
 func TestHandler_CreateShortURL(t *testing.T) {
@@ -34,9 +47,10 @@ func TestHandler_CreateShortURL(t *testing.T) {
 		method         string
 		body           string
 		mockSave       func(string, model.URLRecord) error
+		mockGetByURL   func(string) (string, model.URLRecord, bool, error)
 		expectedStatus int
-		expectedPrefix string // проверяем, что ответ начинается с этого
-		expectedBody   string // для других кейсов (не success)
+		expectedPrefix string
+		expectedBody   string
 	}{
 		{
 			name:   "success",
@@ -44,6 +58,9 @@ func TestHandler_CreateShortURL(t *testing.T) {
 			body:   "https://ya.ru",
 			mockSave: func(_ string, _ model.URLRecord) error {
 				return nil
+			},
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "", model.URLRecord{}, false, nil
 			},
 			expectedStatus: http.StatusCreated,
 			expectedPrefix: config.DefaultBaseURL + "/",
@@ -53,6 +70,7 @@ func TestHandler_CreateShortURL(t *testing.T) {
 			method:         http.MethodPost,
 			body:           "",
 			mockSave:       nil,
+			mockGetByURL:   nil,
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "Empty body\n",
 		},
@@ -63,17 +81,34 @@ func TestHandler_CreateShortURL(t *testing.T) {
 			mockSave: func(_ string, _ model.URLRecord) error {
 				return errors.New("some error")
 			},
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "", model.URLRecord{}, false, nil
+			},
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "some error\n",
+		},
+		{
+			name:   "conflict",
+			method: http.MethodPost,
+			body:   "https://ya.ru",
+			mockSave: func(_ string, _ model.URLRecord) error {
+				return nil
+			},
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "existingID", model.URLRecord{OriginalURL: "https://ya.ru"}, true, nil
+			},
+			expectedStatus: http.StatusConflict,
+			expectedBody:   config.DefaultBaseURL + "/existingID",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &mockRepo{
-				saveFunc: tt.mockSave,
+				saveFunc:             tt.mockSave,
+				getByOriginalURLFunc: tt.mockGetByURL,
 			}
-			svc := service.NewURLService(repo)
+			svc := service.NewURLService(repo, config.DefaultBaseURL)
 			h := NewURLHandler(svc, config.DefaultBaseURL)
 
 			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
@@ -87,7 +122,6 @@ func TestHandler_CreateShortURL(t *testing.T) {
 			if tt.expectedPrefix != "" {
 				body := w.Body.String()
 				assert.True(t, strings.HasPrefix(body, tt.expectedPrefix), "ответ должен начинаться с %s, получено %s", tt.expectedPrefix, body)
-				// Проверяем, что после префикса есть непустой ID
 				id := strings.TrimPrefix(body, tt.expectedPrefix)
 				assert.NotEmpty(t, id, "ID не должен быть пустым")
 			}
@@ -103,7 +137,7 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 		name           string
 		method         string
 		path           string
-		mockGet        func(string) (model.URLRecord, bool)
+		mockGet        func(string) (model.URLRecord, bool, error)
 		expectedStatus int
 		expectedHeader map[string]string
 	}{
@@ -111,11 +145,11 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 			name:   "success redirect",
 			method: http.MethodGet,
 			path:   "/abc123",
-			mockGet: func(id string) (model.URLRecord, bool) {
+			mockGet: func(id string) (model.URLRecord, bool, error) {
 				if id == "abc123" {
-					return model.URLRecord{OriginalURL: "https://ya.ru"}, true
+					return model.URLRecord{OriginalURL: "https://ya.ru"}, true, nil
 				}
-				return model.URLRecord{}, false
+				return model.URLRecord{}, false, nil
 			},
 			expectedStatus: http.StatusTemporaryRedirect,
 			expectedHeader: map[string]string{"Location": "https://ya.ru"},
@@ -131,8 +165,8 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 			name:   "not found",
 			method: http.MethodGet,
 			path:   "/notfound",
-			mockGet: func(_ string) (model.URLRecord, bool) {
-				return model.URLRecord{}, false
+			mockGet: func(_ string) (model.URLRecord, bool, error) {
+				return model.URLRecord{}, false, nil
 			},
 			expectedStatus: http.StatusBadRequest,
 		},
@@ -143,7 +177,7 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 			repo := &mockRepo{
 				getFunc: tt.mockGet,
 			}
-			svc := service.NewURLService(repo)
+			svc := service.NewURLService(repo, config.DefaultBaseURL)
 			h := NewURLHandler(svc, config.DefaultBaseURL)
 
 			req := httptest.NewRequest(tt.method, tt.path, nil)
@@ -165,6 +199,7 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 		method         string
 		body           string
 		mockSave       func(string, model.URLRecord) error
+		mockGetByURL   func(string) (string, model.URLRecord, bool, error)
 		expectedStatus int
 		expectedBody   string
 		checkJSON      bool
@@ -176,15 +211,31 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 			mockSave: func(_ string, _ model.URLRecord) error {
 				return nil
 			},
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "", model.URLRecord{}, false, nil
+			},
 			expectedStatus: http.StatusCreated,
-			// проверяем, что в ответе есть поле "result" с корректным URL
-			checkJSON: true,
+			checkJSON:      true,
+		},
+		{
+			name:   "conflict",
+			method: http.MethodPost,
+			body:   `{"url":"https://ya.ru"}`,
+			mockSave: func(_ string, _ model.URLRecord) error {
+				return nil
+			},
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "existingID", model.URLRecord{OriginalURL: "https://ya.ru"}, true, nil
+			},
+			expectedStatus: http.StatusConflict,
+			checkJSON:      true,
 		},
 		{
 			name:           "empty url",
 			method:         http.MethodPost,
 			body:           `{"url":""}`,
 			mockSave:       nil,
+			mockGetByURL:   nil,
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "URL is empty\n",
 		},
@@ -193,6 +244,7 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 			method:         http.MethodPost,
 			body:           `{"url": "missing quote}`,
 			mockSave:       nil,
+			mockGetByURL:   nil,
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "Invalid JSON\n",
 		},
@@ -203,6 +255,9 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 			mockSave: func(_ string, _ model.URLRecord) error {
 				return errors.New("some repo error")
 			},
+			mockGetByURL: func(_ string) (string, model.URLRecord, bool, error) {
+				return "", model.URLRecord{}, false, nil
+			},
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "some repo error\n",
 		},
@@ -211,6 +266,7 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 			method:         http.MethodGet,
 			body:           "",
 			mockSave:       nil,
+			mockGetByURL:   nil,
 			expectedStatus: http.StatusMethodNotAllowed,
 			expectedBody:   "Only POST allowed\n",
 		},
@@ -219,9 +275,10 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &mockRepo{
-				saveFunc: tt.mockSave,
+				saveFunc:             tt.mockSave,
+				getByOriginalURLFunc: tt.mockGetByURL,
 			}
-			svc := service.NewURLService(repo)
+			svc := service.NewURLService(repo, config.DefaultBaseURL)
 			h := NewURLHandler(svc, config.DefaultBaseURL)
 
 			req := httptest.NewRequest(tt.method, "/api/shorten", strings.NewReader(tt.body))
@@ -246,6 +303,101 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 				} else {
 					assert.Equal(t, tt.expectedBody, w.Body.String())
 				}
+			}
+		})
+	}
+}
+
+func TestHandler_CreateShortenBatch(t *testing.T) {
+	tests := []struct {
+		name           string
+		method         string
+		body           string
+		mockSaveBatch  func(map[string]model.URLRecord) error
+		expectedStatus int
+		expectedBody   string
+		checkJSON      bool
+	}{
+		{
+			name:   "success batch",
+			method: http.MethodPost,
+			body: `[
+				{"correlation_id":"1", "original_url":"https://ya.ru"},
+				{"correlation_id":"2", "original_url":"https://google.com"}
+			]`,
+			mockSaveBatch: func(_ map[string]model.URLRecord) error {
+				return nil
+			},
+			expectedStatus: http.StatusCreated,
+			checkJSON:      true,
+		},
+		{
+			name:           "empty batch",
+			method:         http.MethodPost,
+			body:           `[]`,
+			mockSaveBatch:  nil,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Empty batch\n",
+		},
+		{
+			name:           "invalid json",
+			method:         http.MethodPost,
+			body:           `[{"correlation_id":"1", "original_url":}`,
+			mockSaveBatch:  nil,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Invalid JSON\n",
+		},
+		{
+			name:   "repository error",
+			method: http.MethodPost,
+			body: `[
+				{"correlation_id":"1", "original_url":"https://ya.ru"}
+			]`,
+			mockSaveBatch: func(_ map[string]model.URLRecord) error {
+				return errors.New("some repo error")
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "some repo error\n",
+		},
+		{
+			name:           "method not allowed",
+			method:         http.MethodGet,
+			body:           "",
+			mockSaveBatch:  nil,
+			expectedStatus: http.StatusMethodNotAllowed,
+			expectedBody:   "Only POST allowed\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockRepo{
+				saveBatchFunc: tt.mockSaveBatch,
+			}
+			svc := service.NewURLService(repo, config.DefaultBaseURL)
+			h := NewURLHandler(svc, config.DefaultBaseURL)
+
+			req := httptest.NewRequest(tt.method, "/api/shorten/batch", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			h.CreateShortenBatch(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			if tt.checkJSON {
+				var resp []map[string]string
+				err := json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.NoError(t, err)
+				assert.Len(t, resp, 2)
+				for _, item := range resp {
+					assert.Contains(t, item, "correlation_id")
+					assert.Contains(t, item, "short_url")
+					assert.True(t, strings.HasPrefix(item["short_url"], config.DefaultBaseURL+"/"))
+				}
+			}
+			if tt.expectedBody != "" {
+				assert.Equal(t, tt.expectedBody, w.Body.String())
 			}
 		})
 	}

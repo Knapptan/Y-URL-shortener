@@ -28,6 +28,16 @@ type shortenResponse struct {
 	Result string `json:"result"`
 }
 
+type batchRequest struct {
+	CorrelationID string `json:"correlation_id"`
+	OriginalURL   string `json:"original_url"`
+}
+
+type batchResponse struct {
+	CorrelationID string `json:"correlation_id"`
+	ShortURL      string `json:"short_url"`
+}
+
 // NewURLHandler конструктор.
 func NewURLHandler(svc *service.URLService, baseURL string) *URLHandler {
 	return &URLHandler{
@@ -45,12 +55,19 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 	originalURL := string(body)
 
-	id, err := h.service.Shorten(originalURL)
+	id, exists, err := h.service.Shorten(originalURL)
 	if err != nil {
+		slog.Error("Failed to shorten URL", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
+	if exists {
+		// Возвращаем 409 Conflict с уже существующим URL
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusConflict)
+		w.Write([]byte(h.baseURL + "/" + id))
+		return
+	}
 	// формируем полную короткую ссылку
 	shortURL := h.baseURL + "/" + id
 
@@ -73,7 +90,12 @@ func (h *URLHandler) RedirectToOriginal(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	originalURL, ok := h.service.GetOriginal(id)
+	originalURL, ok, err := h.service.GetOriginal(id)
+	if err != nil {
+		slog.Error("Failed to get original URL", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	if !ok {
 		http.Error(w, "URL not found", http.StatusBadRequest)
 		return
@@ -105,9 +127,19 @@ func (h *URLHandler) CreateShortenJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Вызываем сервис
-	id, err := h.service.Shorten(req.URL)
+	id, exists, err := h.service.Shorten(req.URL)
 	if err != nil {
+		slog.Error("Failed to shorten URL", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if exists {
+		resp := shortenResponse{Result: h.baseURL + "/" + id}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			slog.Error("Failed to encode response", "error", err)
+		}
 		return
 	}
 
@@ -131,5 +163,53 @@ func (h *URLHandler) CreateShortenJSON(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(buf.Bytes()); err != nil {
 		// ошибка записи клиенту – можем только залогировать
 		slog.Error("Failed to write response", "error", err)
+	}
+}
+
+func (h *URLHandler) CreateShortenBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req []batchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(req) == 0 {
+		http.Error(w, "Empty batch", http.StatusBadRequest)
+		return
+	}
+
+	// Преобразуем в сервисные объекты
+	items := make([]service.BatchItem, len(req))
+	for i, v := range req {
+		items[i] = service.BatchItem{
+			CorrelationID: v.CorrelationID,
+			OriginalURL:   v.OriginalURL,
+		}
+	}
+
+	results, err := h.service.ShortenBatch(items)
+	if err != nil {
+		slog.Error("Failed to process batch", "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Формируем ответ
+	resp := make([]batchResponse, len(results))
+	for i, v := range results {
+		resp[i] = batchResponse{
+			CorrelationID: v.CorrelationID,
+			ShortURL:      v.ShortURL,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("Failed to encode response", "error", err)
 	}
 }

@@ -1,0 +1,80 @@
+package repository
+
+import (
+	"database/sql"
+	"os"
+	"testing"
+
+	"github.com/Knapptan/Y-URL-shortener/internal/model"
+	_ "github.com/lib/pq"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestDBRepository(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_DSN")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_DSN not set, skipping DB tests")
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Очищаем таблицу перед тестом
+	_, _ = db.Exec("DELETE FROM short_urls")
+
+	repo, err := NewDBRepository(db)
+	require.NoError(t, err)
+
+	// Сохраняем запись
+	err = repo.Save("test123", model.URLRecord{OriginalURL: "https://example.com"})
+	assert.NoError(t, err)
+
+	// Попытка сохранить дубликат – ошибка
+	err = repo.Save("test123", model.URLRecord{OriginalURL: "https://example2.com"})
+	assert.ErrorIs(t, err, ErrIDExists)
+
+	// Получение существующей записи
+	record, ok, err := repo.Get("test123")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "https://example.com", record.OriginalURL)
+
+	// Получение отсутствующей
+	_, ok, err = repo.Get("notexist")
+	assert.NoError(t, err)
+	assert.False(t, ok)
+
+	// Проверка миграции (таблица создана)
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM short_urls").Scan(&count)
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, count, 1)
+
+	// Тестирование GetByOriginalURL
+	t.Run("GetByOriginalURL", func(t *testing.T) {
+		// Существующий URL
+		id, rec, ok, err := repo.GetByOriginalURL("https://example.com")
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "test123", id)
+		assert.Equal(t, "https://example.com", rec.OriginalURL)
+
+		// Сохраняем ещё один уникальный URL
+		err = repo.Save("test456", model.URLRecord{OriginalURL: "https://another.com"})
+		require.NoError(t, err)
+
+		// Проверяем поиск
+		id, rec, ok, err = repo.GetByOriginalURL("https://another.com")
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "test456", id)
+		assert.Equal(t, "https://another.com", rec.OriginalURL)
+
+		// Несуществующий
+		_, _, ok, err = repo.GetByOriginalURL("https://nonexistent.com")
+		assert.NoError(t, err)
+		assert.False(t, ok)
+	})
+}
