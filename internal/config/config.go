@@ -20,6 +20,9 @@ const (
 
 	EnvSecretKey     = "SECRET_KEY"
 	DefaultSecretKey = "your-secret-key"
+
+	EnvAuditFile = "AUDIT_FILE"
+	EnvAuditURL  = "AUDIT_URL"
 )
 
 type Config struct {
@@ -28,6 +31,8 @@ type Config struct {
 	FileStoragePath string
 	DatabaseDSN     string
 	SecretKey       string
+	AuditFile       string
+	AuditURL        string
 }
 
 // BuildConfig определяет конфигурацию на основе значений из флагов и переменных окружения.
@@ -41,7 +46,12 @@ func BuildConfig(flagServerAddress, flagBaseURL string) *Config {
 
 // resolveConfig определяет итоговые значения с учётом приоритета:
 // переменная окружения > переданный флаг > значение по умолчанию.
-func resolveConfig(flagServer, flagBase, envServer, envBase, flagFile, envFile, flagDSN, envDSN, flagSecret, envSecret string) *Config {
+func resolveConfig(
+	flagServer, flagBase, envServer, envBase,
+	flagFile, envFile, flagDSN, envDSN,
+	flagSecret, envSecret, flagAuditFile, envAuditFile,
+	flagAuditURL, envAuditURL string,
+) *Config {
 	server := flagServer
 	if envServer != "" {
 		server = envServer
@@ -68,6 +78,14 @@ func resolveConfig(flagServer, flagBase, envServer, envBase, flagFile, envFile, 
 	if secret == "" {
 		secret = DefaultSecretKey
 	}
+	auditFile := flagAuditFile
+	if envAuditFile != "" {
+		auditFile = envAuditFile
+	}
+	auditURL := flagAuditURL
+	if envAuditURL != "" {
+		auditURL = envAuditURL
+	}
 	// если dsn == "" – оставляем пустым
 	return &Config{
 		ServerAddress:   server,
@@ -75,6 +93,8 @@ func resolveConfig(flagServer, flagBase, envServer, envBase, flagFile, envFile, 
 		FileStoragePath: filePath,
 		DatabaseDSN:     dsn,
 		SecretKey:       secret,
+		AuditFile:       auditFile,
+		AuditURL:        auditURL,
 	}
 }
 
@@ -87,12 +107,16 @@ func ParseFlags() *Config {
 		filePath      string
 		databaseDSN   string
 		secretKey     string
+		auditFile     string
+		auditURL      string
 	)
 	flag.StringVar(&serverAddress, "a", DefaultServerAddress, "address and port")
 	flag.StringVar(&baseURL, "b", DefaultBaseURL, "base URL")
 	flag.StringVar(&filePath, "f", DefaultFileStoragePath, "file path for storage")
 	flag.StringVar(&databaseDSN, "d", DefaultDatabaseDSN, "database DSN")
 	flag.StringVar(&secretKey, "s", DefaultSecretKey, "secret key for signing cookies")
+	flag.StringVar(&auditFile, "audit-file", "", "audit log file path")
+	flag.StringVar(&auditURL, "audit-url", "", "audit remote server URL")
 	flag.Parse()
 
 	envServer := os.Getenv(EnvServerAddress)
@@ -100,6 +124,13 @@ func ParseFlags() *Config {
 	envFile := os.Getenv(EnvFileStoragePath)
 	envDSN := os.Getenv(EnvDatabaseDSN)
 	envSecret := os.Getenv(EnvSecretKey)
+	envAuditFile := os.Getenv(EnvAuditFile)
+	envAuditURL := os.Getenv(EnvAuditURL)
 
-	return resolveConfig(serverAddress, baseURL, envServer, envBase, filePath, envFile, databaseDSN, envDSN, secretKey, envSecret)
+	return resolveConfig(
+		serverAddress, baseURL, envServer, envBase,
+		filePath, envFile, databaseDSN, envDSN,
+		secretKey, envSecret, auditFile, envAuditFile,
+		auditURL, envAuditURL,
+	)
 }

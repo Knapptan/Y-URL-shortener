@@ -10,22 +10,28 @@ import (
 
 func TestResolveConfig(t *testing.T) {
 	tests := []struct {
-		name           string
-		flagServer     string
-		flagBase       string
-		envServer      string
-		envBase        string
-		flagFile       string
-		envFile        string
-		flagDSN        string
-		envDSN         string
-		flagSecret     string
-		envSecret      string
-		expectedServer string
-		expectedBase   string
-		expectedFile   string
-		expectedDSN    string
-		expectedSecret string
+		name              string
+		flagServer        string
+		flagBase          string
+		envServer         string
+		envBase           string
+		flagFile          string
+		envFile           string
+		flagDSN           string
+		envDSN            string
+		flagSecret        string
+		envSecret         string
+		flagAuditFile     string
+		envAuditFile      string
+		flagAuditURL      string
+		envAuditURL       string
+		expectedServer    string
+		expectedBase      string
+		expectedFile      string
+		expectedDSN       string
+		expectedSecret    string
+		expectedAuditFile string
+		expectedAuditURL  string
 	}{
 		{
 			name:           "no flags, no env",
@@ -66,6 +72,48 @@ func TestResolveConfig(t *testing.T) {
 			expectedFile:   DefaultFileStoragePath,
 			expectedSecret: "env-secret",
 		},
+		{
+			name:              "audit flags only",
+			flagServer:        DefaultServerAddress,
+			flagBase:          DefaultBaseURL,
+			flagSecret:        DefaultSecretKey,
+			flagAuditFile:     "/tmp/audit.log",
+			flagAuditURL:      "http://audit.local/events",
+			expectedServer:    DefaultServerAddress,
+			expectedBase:      DefaultBaseURL,
+			expectedFile:      DefaultFileStoragePath,
+			expectedSecret:    DefaultSecretKey,
+			expectedAuditFile: "/tmp/audit.log",
+			expectedAuditURL:  "http://audit.local/events",
+		},
+		{
+			name:              "audit env wins over flags",
+			flagServer:        DefaultServerAddress,
+			flagBase:          DefaultBaseURL,
+			flagSecret:        DefaultSecretKey,
+			flagAuditFile:     "/tmp/flag-audit.log",
+			envAuditFile:      "/tmp/env-audit.log",
+			flagAuditURL:      "http://flag-audit.local/events",
+			envAuditURL:       "http://env-audit.local/events",
+			expectedServer:    DefaultServerAddress,
+			expectedBase:      DefaultBaseURL,
+			expectedFile:      DefaultFileStoragePath,
+			expectedSecret:    DefaultSecretKey,
+			expectedAuditFile: "/tmp/env-audit.log",
+			expectedAuditURL:  "http://env-audit.local/events",
+		},
+		{
+			name:              "audit disabled by default",
+			flagServer:        DefaultServerAddress,
+			flagBase:          DefaultBaseURL,
+			flagSecret:        DefaultSecretKey,
+			expectedServer:    DefaultServerAddress,
+			expectedBase:      DefaultBaseURL,
+			expectedFile:      DefaultFileStoragePath,
+			expectedSecret:    DefaultSecretKey,
+			expectedAuditFile: "",
+			expectedAuditURL:  "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -73,13 +121,16 @@ func TestResolveConfig(t *testing.T) {
 			cfg := resolveConfig(
 				tt.flagServer, tt.flagBase, tt.envServer, tt.envBase,
 				tt.flagFile, tt.envFile, tt.flagDSN, tt.envDSN,
-				tt.flagSecret, tt.envSecret,
+				tt.flagSecret, tt.envSecret, tt.flagAuditFile, tt.envAuditFile,
+				tt.flagAuditURL, tt.envAuditURL,
 			)
 			assert.Equal(t, tt.expectedServer, cfg.ServerAddress)
 			assert.Equal(t, tt.expectedBase, cfg.BaseURL)
 			assert.Equal(t, tt.expectedFile, cfg.FileStoragePath)
 			assert.Equal(t, tt.expectedDSN, cfg.DatabaseDSN)
 			assert.Equal(t, tt.expectedSecret, cfg.SecretKey)
+			assert.Equal(t, tt.expectedAuditFile, cfg.AuditFile)
+			assert.Equal(t, tt.expectedAuditURL, cfg.AuditURL)
 		})
 	}
 }
@@ -96,6 +147,8 @@ func TestParseFlags(t *testing.T) {
 		t.Setenv(EnvFileStoragePath, "")
 		t.Setenv(EnvDatabaseDSN, "")
 		t.Setenv(EnvSecretKey, "")
+		t.Setenv(EnvAuditFile, "")
+		t.Setenv(EnvAuditURL, "")
 		cfg := ParseFlags()
 		assert.Equal(t, "localhost:8888", cfg.ServerAddress)
 		assert.Equal(t, "http://localhost:8888", cfg.BaseURL)
@@ -111,10 +164,35 @@ func TestParseFlags(t *testing.T) {
 		t.Setenv(EnvFileStoragePath, "")
 		t.Setenv(EnvDatabaseDSN, "")
 		t.Setenv(EnvSecretKey, "env-secret")
+		t.Setenv(EnvAuditFile, "")
+		t.Setenv(EnvAuditURL, "")
 		cfg := ParseFlags()
 		assert.Equal(t, "localhost:9999", cfg.ServerAddress)
 		assert.Equal(t, "http://localhost:9999", cfg.BaseURL)
 		assert.Equal(t, DefaultFileStoragePath, cfg.FileStoragePath)
 		assert.Equal(t, "env-secret", cfg.SecretKey)
+	})
+
+	t.Run("audit flags and env", func(t *testing.T) {
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		os.Args = []string{"cmd", "-audit-file", "/tmp/flag-audit.log", "-audit-url", "http://flag-audit.local/events"}
+		t.Setenv(EnvServerAddress, "")
+		t.Setenv(EnvBaseURL, "")
+		t.Setenv(EnvFileStoragePath, "")
+		t.Setenv(EnvDatabaseDSN, "")
+		t.Setenv(EnvSecretKey, "")
+		t.Setenv(EnvAuditFile, "")
+		t.Setenv(EnvAuditURL, "")
+		cfg := ParseFlags()
+		assert.Equal(t, "/tmp/flag-audit.log", cfg.AuditFile)
+		assert.Equal(t, "http://flag-audit.local/events", cfg.AuditURL)
+
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		os.Args = []string{"cmd", "-audit-file", "/tmp/flag-audit.log", "-audit-url", "http://flag-audit.local/events"}
+		t.Setenv(EnvAuditFile, "/tmp/env-audit.log")
+		t.Setenv(EnvAuditURL, "http://env-audit.local/events")
+		cfg = ParseFlags()
+		assert.Equal(t, "/tmp/env-audit.log", cfg.AuditFile)
+		assert.Equal(t, "http://env-audit.local/events", cfg.AuditURL)
 	})
 }
