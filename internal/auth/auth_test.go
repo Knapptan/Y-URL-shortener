@@ -79,3 +79,27 @@ func TestSetUserCookie(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, userID, verified)
 }
+
+func TestSignAndVerify(t *testing.T) {
+	secret := "test-secret"
+	userID := "user-123"
+
+	signed := SignUserID(userID, secret)
+	assert.Contains(t, signed, ":")
+
+	got, err := VerifyUserID(signed, secret)
+	require.NoError(t, err)
+	assert.Equal(t, userID, got)
+
+	// Неверный secret
+	_, err = VerifyUserID(signed, "wrong-secret")
+	assert.Error(t, err)
+
+	// Неверный формат
+	_, err = VerifyUserID("garbage", secret)
+	assert.Error(t, err)
+
+	// Пустой userID
+	_, err = VerifyUserID(":signature", secret)
+	assert.Error(t, err)
+}

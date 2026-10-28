@@ -196,3 +196,22 @@ func TestParseFlags(t *testing.T) {
 		assert.Equal(t, "http://env-audit.local/events", cfg.AuditURL)
 	})
 }
+
+func TestParseFlagsDefaults(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	os.Args = []string{"cmd"}
+
+	t.Setenv(EnvServerAddress, "")
+	t.Setenv(EnvBaseURL, "")
+	t.Setenv(EnvFileStoragePath, "")
+	t.Setenv(EnvDatabaseDSN, "")
+	t.Setenv(EnvSecretKey, "")
+
+	cfg := ParseFlags()
+	assert.Equal(t, DefaultServerAddress, cfg.ServerAddress)
+	assert.Equal(t, DefaultBaseURL, cfg.BaseURL)
+	assert.Equal(t, DefaultSecretKey, cfg.SecretKey)
+}

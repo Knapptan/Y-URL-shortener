@@ -13,11 +13,13 @@ type responseWriter struct {
 	size   int
 }
 
+// WriteHeader сохраняет статус и передаёт вызов оригинальному ResponseWriter.
 func (rw *responseWriter) WriteHeader(status int) {
 	rw.status = status
 	rw.ResponseWriter.WriteHeader(status)
 }
 
+// Write сохраняет размер ответа и передаёт данные оригинальному ResponseWriter.
 func (rw *responseWriter) Write(b []byte) (int, error) {
 	if rw.status == 0 {
 		rw.status = http.StatusOK // если WriteHeader не вызывали, статус 200

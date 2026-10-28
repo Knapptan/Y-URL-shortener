@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// CookieName — имя cookie с идентификатором пользователя.
 const CookieName = "user_id"
 
 // GenerateUserID создаёт новый UUID.

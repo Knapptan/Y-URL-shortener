@@ -6,8 +6,12 @@ import (
 	"github.com/Knapptan/Y-URL-shortener/internal/model"
 )
 
+// Ошибки репозитория.
 var (
-	ErrIDExists   = errors.New("ID already exists")
+	// ErrIDExists возвращается при попытке сохранить уже существующий ID.
+	ErrIDExists = errors.New("ID already exists")
+
+	// ErrURLDeleted возвращается при обращении к удалённому URL.
 	ErrURLDeleted = errors.New("URL is deleted")
 )
 

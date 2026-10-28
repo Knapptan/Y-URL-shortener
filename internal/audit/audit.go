@@ -6,10 +6,11 @@ import (
 	"time"
 )
 
+// Константы действий аудита.
 const (
-	// ActionShorten — создание короткой ссылки.
+	// ActionShorten — действие «создание короткого URL».
 	ActionShorten = "shorten"
-	// ActionFollow — переход по короткой ссылке.
+	// ActionFollow — действие «переход по короткой ссылке».
 	ActionFollow = "follow"
 )
 

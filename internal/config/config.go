@@ -5,10 +5,14 @@ import (
 	"os"
 )
 
+// Константы конфигурации: значения по умолчанию и имена переменных окружения.
 const (
+	// DefaultServerAddress — адрес сервера по умолчанию.
 	DefaultServerAddress = "localhost:8080"
-	DefaultBaseURL       = "http://localhost:8080"
+	// DefaultBaseURL — базовый URL по умолчанию.
+	DefaultBaseURL = "http://localhost:8080"
 
+	// EnvServerAddress — имя переменной окружения для адреса сервера.
 	EnvServerAddress = "SERVER_ADDRESS"
 	EnvBaseURL       = "BASE_URL"
 
@@ -25,6 +29,7 @@ const (
 	EnvAuditURL  = "AUDIT_URL"
 )
 
+// Config хранит настройки сервиса.
 type Config struct {
 	ServerAddress   string
 	BaseURL         string

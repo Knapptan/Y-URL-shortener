@@ -32,6 +32,7 @@ func shouldCompress(contentType string) bool {
 		strings.HasPrefix(lower, "text/html")
 }
 
+// GzipMiddleware реализует поддержку gzip-сжатия запросов и ответов.
 func GzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.Header.Get("Content-Encoding"), "gzip") {
@@ -61,6 +62,7 @@ type gzipResponseWriter struct {
 	wroteHeader bool
 }
 
+// WriteHeader перехватывает статус и при необходимости включает сжатие.
 func (g *gzipResponseWriter) WriteHeader(statusCode int) {
 	if g.wroteHeader {
 		return
@@ -75,6 +77,7 @@ func (g *gzipResponseWriter) WriteHeader(statusCode int) {
 	g.ResponseWriter.WriteHeader(statusCode)
 }
 
+// Write передаёт данные в gzip.Writer или в оригинальный writer.
 func (g *gzipResponseWriter) Write(b []byte) (int, error) {
 	if !g.wroteHeader {
 		g.WriteHeader(http.StatusOK)
@@ -85,6 +88,7 @@ func (g *gzipResponseWriter) Write(b []byte) (int, error) {
 	return g.origWriter.Write(b)
 }
 
+// Close возвращает gzip.Writer в пул.
 func (g *gzipResponseWriter) Close() error {
 	if g.gz != nil {
 		putGzipWriter(g.gz)
