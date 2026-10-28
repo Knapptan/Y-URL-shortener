@@ -107,9 +107,9 @@ func (s *URLService) ShortenBatch(items []BatchItem, userID string) ([]BatchResu
 		return nil, errors.New("empty batch")
 	}
 
+	batch := make(map[string]model.URLRecord, len(items))
+	processed := make(map[string]string, len(items))
 	results := make([]BatchResult, 0, len(items))
-	batch := make(map[string]model.URLRecord)
-	processed := make(map[string]string)
 
 	for _, item := range items {
 		if existingID, ok := processed[item.OriginalURL]; ok {

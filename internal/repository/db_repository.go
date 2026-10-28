@@ -94,7 +94,8 @@ func (r *DBRepository) GetByUserID(userID string) ([]model.URLRecord, error) {
 	}
 	defer rows.Close()
 
-	var records []model.URLRecord
+	// Preallocate под типичный размер выборки.
+	records := make([]model.URLRecord, 0, 16)
 	for rows.Next() {
 		var rec model.URLRecord
 		if err := rows.Scan(&rec.ID, &rec.OriginalURL, &rec.UserID, &rec.Deleted); err != nil {

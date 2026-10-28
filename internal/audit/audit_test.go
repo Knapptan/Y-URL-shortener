@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,9 +116,11 @@ func TestPublisherNotifiesAllReceivers(t *testing.T) {
 	defer fileObserver.Close()
 
 	var httpEvent Event
+	serverDone := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&httpEvent))
 		w.WriteHeader(http.StatusNoContent)
+		close(serverDone)
 	}))
 	defer server.Close()
 
@@ -127,6 +130,13 @@ func TestPublisherNotifiesAllReceivers(t *testing.T) {
 
 	event := NewEvent(ActionFollow, "user-1", "https://ya.ru")
 	publisher.Publish(event)
+
+	// Ждём асинхронный HTTP-запрос
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HTTPObserver did not deliver event")
+	}
 
 	assert.Equal(t, event, httpEvent)
 
@@ -149,11 +159,13 @@ func TestFileObserverWriteError(t *testing.T) {
 
 func TestHTTPObserver(t *testing.T) {
 	var received Event
+	serverDone := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&received))
 		w.WriteHeader(http.StatusNoContent)
+		close(serverDone)
 	}))
 	defer server.Close()
 
@@ -161,14 +173,23 @@ func TestHTTPObserver(t *testing.T) {
 	event := NewEvent(ActionFollow, "user-1", "https://ya.ru")
 	observer.Notify(event)
 
+	// Ждём асинхронный HTTP-запрос
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HTTPObserver did not deliver event")
+	}
+
 	assert.Equal(t, event, received)
 }
 
 func TestHTTPObserverNon2xx(t *testing.T) {
 	called := false
+	serverDone := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusInternalServerError)
+		close(serverDone)
 	}))
 	defer server.Close()
 
@@ -176,6 +197,14 @@ func TestHTTPObserverNon2xx(t *testing.T) {
 	assert.NotPanics(t, func() {
 		observer.Notify(NewEvent(ActionShorten, "", "https://ya.ru"))
 	})
+
+	// Ждём асинхронный HTTP-запрос
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HTTPObserver did not send request")
+	}
+
 	assert.True(t, called)
 }
 
