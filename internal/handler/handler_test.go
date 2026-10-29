@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/audit"
@@ -37,6 +38,25 @@ func (m *mockRepo) Get(id string) (model.URLRecord, bool, error) {
 
 func (m *mockRepo) SaveBatch(batch map[string]model.URLRecord) error {
 	return m.saveBatchFunc(batch)
+}
+
+type recordingObserver struct {
+	mu     sync.Mutex
+	events []audit.Event
+}
+
+func (o *recordingObserver) Notify(event audit.Event) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.events = append(o.events, event)
+}
+
+func (o *recordingObserver) Events() []audit.Event {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	result := make([]audit.Event, len(o.events))
+	copy(result, o.events)
+	return result
 }
 
 func (m *mockRepo) GetByOriginalURL(originalURL string) (string, model.URLRecord, bool, error) {
@@ -572,15 +592,6 @@ func TestHandler_DeleteUserURLs(t *testing.T) {
 		})
 	}
 }
-
-type recordingObserver struct {
-	events []audit.Event
-}
-
-func (o *recordingObserver) Notify(event audit.Event) {
-	o.events = append(o.events, event)
-}
-
 func TestHandler_Audit(t *testing.T) {
 	newPublisher := func() (*audit.Publisher, *recordingObserver) {
 		publisher := audit.NewPublisher()

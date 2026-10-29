@@ -10,14 +10,12 @@ import (
 
 // BenchmarkFileRepoGetByUserID измеряет скорость и аллокации GetByUserID.
 func BenchmarkFileRepoGetByUserID(b *testing.B) {
-	// Временный файл, чтобы не засорять рабочую директорию.
 	tmp := filepath.Join(b.TempDir(), "storage.json")
 	repo, err := NewFileRepository(tmp)
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	// Создаём 100 записей, 20 из которых принадлежат пользователю "u1".
 	for i := 0; i < 100; i++ {
 		uid := "u2"
 		if i%5 == 0 {
@@ -32,11 +30,7 @@ func BenchmarkFileRepoGetByUserID(b *testing.B) {
 		}
 	}
 
-	// Сбрасываем таймер, чтобы подготовка не попала в измерения.
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = repo.GetByUserID("u1")
 	}
 }
@@ -59,10 +53,7 @@ func BenchmarkInMemoryGetByUserID(b *testing.B) {
 		}
 	}
 
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = repo.GetByUserID("u1")
 	}
 }

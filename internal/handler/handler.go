@@ -15,13 +15,23 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// EventPublisher публикует события аудита.
+type EventPublisher interface {
+	Publish(event audit.Event)
+}
+
+// noopPublisher — пустой издатель для случаев, когда аудит не настроен.
+type noopPublisher struct{}
+
+// Publish ничего не делает.
+func (noopPublisher) Publish(audit.Event) {}
+
 // URLHandler содержит сервис, базовый URL и издателя событий аудита.
 type URLHandler struct {
 	service   *service.URLService
 	baseURL   string
-	publisher *audit.Publisher
+	publisher EventPublisher
 }
-
 type shortenRequest struct {
 	URL string `json:"url"`
 }
@@ -64,7 +74,11 @@ type asyncShortenResult struct {
 }
 
 // NewURLHandler создаёт новый обработчик.
-func NewURLHandler(svc *service.URLService, baseURL string, publisher *audit.Publisher) *URLHandler {
+// Если publisher равен nil, используется пустой издатель.
+func NewURLHandler(svc *service.URLService, baseURL string, publisher EventPublisher) *URLHandler {
+	if publisher == nil {
+		publisher = noopPublisher{}
+	}
 	return &URLHandler{service: svc, baseURL: baseURL, publisher: publisher}
 }
 

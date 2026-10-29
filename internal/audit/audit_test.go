@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,11 +17,22 @@ import (
 )
 
 type testObserver struct {
+	mu     sync.Mutex
 	events []Event
 }
 
 func (o *testObserver) Notify(event Event) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	o.events = append(o.events, event)
+}
+
+func (o *testObserver) Events() []Event {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	result := make([]Event, len(o.events))
+	copy(result, o.events)
+	return result
 }
 
 func TestPublisher(t *testing.T) {
@@ -34,8 +46,8 @@ func TestPublisher(t *testing.T) {
 	event := NewEvent(ActionShorten, "user-1", "https://ya.ru")
 	publisher.Publish(event)
 
-	assert.Equal(t, []Event{event}, first.events)
-	assert.Equal(t, []Event{event}, second.events)
+	assert.Equal(t, []Event{event}, first.Events())
+	assert.Equal(t, []Event{event}, second.Events())
 }
 
 func TestPublisherNil(t *testing.T) {
@@ -186,19 +198,21 @@ func TestHTTPObserver(t *testing.T) {
 func TestHTTPObserverNon2xx(t *testing.T) {
 	called := false
 	serverDone := make(chan struct{})
+	var once sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
+		once.Do(func() { close(serverDone) })
 		w.WriteHeader(http.StatusInternalServerError)
-		close(serverDone)
 	}))
 	defer server.Close()
 
 	observer := NewHTTPObserver(server.URL)
+	defer observer.Close() // важно: остановит retry-воркеров
+
 	assert.NotPanics(t, func() {
 		observer.Notify(NewEvent(ActionShorten, "", "https://ya.ru"))
 	})
 
-	// Ждём асинхронный HTTP-запрос
 	select {
 	case <-serverDone:
 	case <-time.After(2 * time.Second):

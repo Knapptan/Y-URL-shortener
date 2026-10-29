@@ -62,10 +62,10 @@ func BenchmarkShorten(b *testing.B) {
 	svc := NewURLService(repo, "http://localhost:8080")
 	userID := "bench-user"
 
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	i := 0
+	for b.Loop() {
 		url := fmt.Sprintf("https://example.com/very/long/path/%d", i)
+		i++
 		if _, _, err := svc.Shorten(url, userID); err != nil {
 			b.Fatal(err)
 		}
@@ -81,9 +81,7 @@ func BenchmarkGetOriginal(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _, _, _ = svc.GetOriginal(id)
 	}
 }

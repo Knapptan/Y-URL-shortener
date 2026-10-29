@@ -23,6 +23,7 @@ type Event struct {
 }
 
 // Observer — приёмник аудита.
+// Реализации обязаны быть неблокирующими: Notify.
 type Observer interface {
 	Notify(event Event)
 }
@@ -49,6 +50,8 @@ func (p *Publisher) Register(o Observer) {
 }
 
 // Publish отправляет событие всем наблюдателям.
+// Вызов синхронный, но каждый Notify должен быть неблокирующим,
+// поэтому медленный приёмник не задерживает остальных.
 func (p *Publisher) Publish(event Event) {
 	if p == nil {
 		return

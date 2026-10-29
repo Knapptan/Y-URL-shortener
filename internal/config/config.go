@@ -14,19 +14,28 @@ const (
 
 	// EnvServerAddress — имя переменной окружения для адреса сервера.
 	EnvServerAddress = "SERVER_ADDRESS"
-	EnvBaseURL       = "BASE_URL"
+	// EnvBaseURL — имя переменной окружения для базового URL.
+	EnvBaseURL = "BASE_URL"
 
-	EnvFileStoragePath     = "FILE_STORAGE_PATH"
+	// EnvFileStoragePath — имя переменной окружения для пути к файлу хранилища.
+	EnvFileStoragePath = "FILE_STORAGE_PATH"
+	// DefaultFileStoragePath — путь к файлу хранилища по умолчанию.
 	DefaultFileStoragePath = "storage.json"
 
-	EnvDatabaseDSN     = "DATABASE_DSN"
+	// EnvDatabaseDSN — имя переменной окружения для DSN базы данных.
+	EnvDatabaseDSN = "DATABASE_DSN"
+	// DefaultDatabaseDSN — DSN базы данных по умолчанию (пустое значение отключает БД).
 	DefaultDatabaseDSN = ""
 
-	EnvSecretKey     = "SECRET_KEY"
+	// EnvSecretKey — имя переменной окружения для секретного ключа подписи cookie.
+	EnvSecretKey = "SECRET_KEY"
+	// DefaultSecretKey — секретный ключ по умолчанию (только для локальной разработки).
 	DefaultSecretKey = "your-secret-key"
 
+	// EnvAuditFile — имя переменной окружения для пути к файлу аудита.
 	EnvAuditFile = "AUDIT_FILE"
-	EnvAuditURL  = "AUDIT_URL"
+	// EnvAuditURL — имя переменной окружения для URL удалённого приёмника аудита.
+	EnvAuditURL = "AUDIT_URL"
 )
 
 // Config хранит настройки сервиса.
@@ -91,7 +100,6 @@ func resolveConfig(
 	if envAuditURL != "" {
 		auditURL = envAuditURL
 	}
-	// если dsn == "" – оставляем пустым
 	return &Config{
 		ServerAddress:   server,
 		BaseURL:         base,
@@ -124,13 +132,13 @@ func ParseFlags() *Config {
 	flag.StringVar(&auditURL, "audit-url", "", "audit remote server URL")
 	flag.Parse()
 
-	envServer := os.Getenv(EnvServerAddress)
-	envBase := os.Getenv(EnvBaseURL)
-	envFile := os.Getenv(EnvFileStoragePath)
-	envDSN := os.Getenv(EnvDatabaseDSN)
-	envSecret := os.Getenv(EnvSecretKey)
-	envAuditFile := os.Getenv(EnvAuditFile)
-	envAuditURL := os.Getenv(EnvAuditURL)
+	envServer, _ := os.LookupEnv(EnvServerAddress)
+	envBase, _ := os.LookupEnv(EnvBaseURL)
+	envFile, _ := os.LookupEnv(EnvFileStoragePath)
+	envDSN, _ := os.LookupEnv(EnvDatabaseDSN)
+	envSecret, _ := os.LookupEnv(EnvSecretKey)
+	envAuditFile, _ := os.LookupEnv(EnvAuditFile)
+	envAuditURL, _ := os.LookupEnv(EnvAuditURL)
 
 	return resolveConfig(
 		serverAddress, baseURL, envServer, envBase,

@@ -85,19 +85,19 @@ func Run(cfg *config.Config) error {
 	if cfg.AuditFile != "" {
 		fileObserver, err := audit.NewFileObserver(cfg.AuditFile)
 		if err != nil {
-			slog.Error("Failed to init audit file", "error", err)
+			slog.Error("failed to init audit file", "error", err)
 			return err
 		}
-		defer func() {
-			if err := fileObserver.Close(); err != nil {
-				slog.Error("Failed to close audit file", "error", err)
-			}
-		}()
+		defer fileObserver.Close()
 		publisher.Register(fileObserver)
+		slog.Info("audit: file enabled", "path", cfg.AuditFile)
 	}
 
 	if cfg.AuditURL != "" {
-		publisher.Register(audit.NewHTTPObserver(cfg.AuditURL))
+		httpObserver := audit.NewHTTPObserver(cfg.AuditURL)
+		defer httpObserver.Close()
+		publisher.Register(httpObserver)
+		slog.Info("audit: http enabled", "url", cfg.AuditURL)
 	}
 
 	svc := service.NewURLService(repo, cfg.BaseURL)
