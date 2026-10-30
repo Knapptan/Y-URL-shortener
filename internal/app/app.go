@@ -13,6 +13,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/lib/pq"
 
+	"github.com/Knapptan/Y-URL-shortener/internal/audit"
 	"github.com/Knapptan/Y-URL-shortener/internal/config"
 	"github.com/Knapptan/Y-URL-shortener/internal/handler"
 	"github.com/Knapptan/Y-URL-shortener/internal/middleware"
@@ -79,8 +80,28 @@ func Run(cfg *config.Config) error {
 		}
 	}()
 
+	publisher := audit.NewPublisher()
+
+	if cfg.AuditFile != "" {
+		fileObserver, err := audit.NewFileObserver(cfg.AuditFile)
+		if err != nil {
+			slog.Error("failed to init audit file", "error", err)
+			return err
+		}
+		defer fileObserver.Close()
+		publisher.Register(fileObserver)
+		slog.Info("audit: file enabled", "path", cfg.AuditFile)
+	}
+
+	if cfg.AuditURL != "" {
+		httpObserver := audit.NewHTTPObserver(cfg.AuditURL)
+		defer httpObserver.Close()
+		publisher.Register(httpObserver)
+		slog.Info("audit: http enabled", "url", cfg.AuditURL)
+	}
+
 	svc := service.NewURLService(repo, cfg.BaseURL)
-	h := handler.NewURLHandler(svc, cfg.BaseURL)
+	h := handler.NewURLHandler(svc, cfg.BaseURL, publisher)
 	pingHandler := handler.NewPingHandler(db)
 
 	r := chi.NewRouter()

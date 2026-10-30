@@ -8,18 +8,30 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Knapptan/Y-URL-shortener/internal/audit"
 	"github.com/Knapptan/Y-URL-shortener/internal/middleware"
 	"github.com/Knapptan/Y-URL-shortener/internal/model"
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
 	"github.com/go-chi/chi/v5"
 )
 
-// URLHandler содержит сервис и базовый URL.
-type URLHandler struct {
-	service *service.URLService
-	baseURL string
+// EventPublisher публикует события аудита.
+type EventPublisher interface {
+	Publish(event audit.Event)
 }
 
+// noopPublisher — пустой издатель для случаев, когда аудит не настроен.
+type noopPublisher struct{}
+
+// Publish ничего не делает.
+func (noopPublisher) Publish(audit.Event) {}
+
+// URLHandler содержит сервис, базовый URL и издателя событий аудита.
+type URLHandler struct {
+	service   *service.URLService
+	baseURL   string
+	publisher EventPublisher
+}
 type shortenRequest struct {
 	URL string `json:"url"`
 }
@@ -62,8 +74,12 @@ type asyncShortenResult struct {
 }
 
 // NewURLHandler создаёт новый обработчик.
-func NewURLHandler(svc *service.URLService, baseURL string) *URLHandler {
-	return &URLHandler{service: svc, baseURL: baseURL}
+// Если publisher равен nil, используется пустой издатель.
+func NewURLHandler(svc *service.URLService, baseURL string, publisher EventPublisher) *URLHandler {
+	if publisher == nil {
+		publisher = noopPublisher{}
+	}
+	return &URLHandler{service: svc, baseURL: baseURL, publisher: publisher}
 }
 
 func getUserID(r *http.Request) (string, bool) {
@@ -71,10 +87,21 @@ func getUserID(r *http.Request) (string, bool) {
 	return userID, ok && userID != ""
 }
 
+// notifyAudit публикует событие аудита для успешно обработанного запроса.
+func (h *URLHandler) notifyAudit(r *http.Request, action, url string) {
+	userID, _ := getUserID(r)
+	h.publisher.Publish(audit.NewEvent(action, userID, url))
+}
+
 // CreateShortURL обрабатывает POST /.
 func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
-	if err != nil || len(body) == 0 {
+	if err != nil {
+		http.Error(w, "Empty body", http.StatusBadRequest)
+		return
+	}
+	originalURL := strings.TrimSpace(string(body))
+	if originalURL == "" {
 		http.Error(w, "Empty body", http.StatusBadRequest)
 		return
 	}
@@ -84,12 +111,14 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, exists, err := h.service.Shorten(string(body), userID)
+	id, exists, err := h.service.Shorten(originalURL, userID)
 	if err != nil {
 		slog.Error("Failed to shorten URL", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	h.notifyAudit(r, audit.ActionShorten, originalURL)
+
 	w.Header().Set("Content-Type", "text/plain")
 	if exists {
 		w.WriteHeader(http.StatusConflict)
@@ -125,6 +154,8 @@ func (h *URLHandler) RedirectToOriginal(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	h.notifyAudit(r, audit.ActionFollow, originalURL)
+
 	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
@@ -142,17 +173,19 @@ func (h *URLHandler) CreateShortenJSON(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if req.URL == "" {
+	originalURL := strings.TrimSpace(req.URL)
+	if originalURL == "" {
 		http.Error(w, "URL is empty", http.StatusBadRequest)
 		return
 	}
 
-	id, exists, err := h.service.Shorten(req.URL, userID)
+	id, exists, err := h.service.Shorten(originalURL, userID)
 	if err != nil {
 		slog.Error("Failed to shorten URL", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	h.notifyAudit(r, audit.ActionShorten, originalURL)
 
 	resp := shortenResponse{Result: h.baseURL + "/" + id}
 	var buf bytes.Buffer

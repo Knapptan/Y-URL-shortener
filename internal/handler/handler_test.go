@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/Knapptan/Y-URL-shortener/internal/audit"
 	"github.com/Knapptan/Y-URL-shortener/internal/config"
 	"github.com/Knapptan/Y-URL-shortener/internal/middleware"
 	"github.com/Knapptan/Y-URL-shortener/internal/model"
@@ -36,6 +38,25 @@ func (m *mockRepo) Get(id string) (model.URLRecord, bool, error) {
 
 func (m *mockRepo) SaveBatch(batch map[string]model.URLRecord) error {
 	return m.saveBatchFunc(batch)
+}
+
+type recordingObserver struct {
+	mu     sync.Mutex
+	events []audit.Event
+}
+
+func (o *recordingObserver) Notify(event audit.Event) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.events = append(o.events, event)
+}
+
+func (o *recordingObserver) Events() []audit.Event {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	result := make([]audit.Event, len(o.events))
+	copy(result, o.events)
+	return result
 }
 
 func (m *mockRepo) GetByOriginalURL(originalURL string) (string, model.URLRecord, bool, error) {
@@ -131,7 +152,7 @@ func TestHandler_CreateShortURL(t *testing.T) {
 				getByOriginalURLFunc: tt.mockGetByURL,
 			}
 			svc := service.NewURLService(repo, config.DefaultBaseURL)
-			h := NewURLHandler(svc, config.DefaultBaseURL)
+			h := NewURLHandler(svc, config.DefaultBaseURL, audit.NewPublisher())
 
 			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "text/plain")
@@ -210,7 +231,7 @@ func TestHandler_RedirectToOriginal(t *testing.T) {
 				getFunc: tt.mockGet,
 			}
 			svc := service.NewURLService(repo, config.DefaultBaseURL)
-			h := NewURLHandler(svc, config.DefaultBaseURL)
+			h := NewURLHandler(svc, config.DefaultBaseURL, audit.NewPublisher())
 
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			w := httptest.NewRecorder()
@@ -302,7 +323,7 @@ func TestHandler_CreateShortenJSON(t *testing.T) {
 				getByOriginalURLFunc: tt.mockGetByURL,
 			}
 			svc := service.NewURLService(repo, config.DefaultBaseURL)
-			h := NewURLHandler(svc, config.DefaultBaseURL)
+			h := NewURLHandler(svc, config.DefaultBaseURL, audit.NewPublisher())
 
 			req := httptest.NewRequest(tt.method, "/api/shorten", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
@@ -391,7 +412,7 @@ func TestHandler_CreateShortenBatch(t *testing.T) {
 				saveBatchFunc: tt.mockSaveBatch,
 			}
 			svc := service.NewURLService(repo, config.DefaultBaseURL)
-			h := NewURLHandler(svc, config.DefaultBaseURL)
+			h := NewURLHandler(svc, config.DefaultBaseURL, audit.NewPublisher())
 
 			req := httptest.NewRequest(tt.method, "/api/shorten/batch", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
@@ -474,7 +495,7 @@ func TestHandler_GetUserURLs(t *testing.T) {
 				getByUserIDFunc: tt.mockGetByUser,
 			}
 			svc := service.NewURLService(repo, config.DefaultBaseURL)
-			h := NewURLHandler(svc, config.DefaultBaseURL)
+			h := NewURLHandler(svc, config.DefaultBaseURL, audit.NewPublisher())
 
 			req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
 			if tt.userID != "" {
@@ -556,7 +577,7 @@ func TestHandler_DeleteUserURLs(t *testing.T) {
 				batchDeleteByUserFunc: tt.mockDelete,
 			}
 			svc := service.NewURLService(repo, config.DefaultBaseURL)
-			h := NewURLHandler(svc, config.DefaultBaseURL)
+			h := NewURLHandler(svc, config.DefaultBaseURL, audit.NewPublisher())
 
 			req := httptest.NewRequest(http.MethodDelete, "/api/user/urls", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
@@ -570,4 +591,89 @@ func TestHandler_DeleteUserURLs(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, w.Code)
 		})
 	}
+}
+func TestHandler_Audit(t *testing.T) {
+	newPublisher := func() (*audit.Publisher, *recordingObserver) {
+		publisher := audit.NewPublisher()
+		observer := &recordingObserver{}
+		publisher.Register(observer)
+		return publisher, observer
+	}
+
+	t.Run("shorten via POST /", func(t *testing.T) {
+		repo := &mockRepo{
+			saveFunc: func(_ string, _ model.URLRecord) error { return nil },
+			getByOriginalURLFunc: func(_ string) (string, model.URLRecord, bool, error) {
+				return "", model.URLRecord{}, false, nil
+			},
+		}
+		publisher, observer := newPublisher()
+		h := NewURLHandler(service.NewURLService(repo, config.DefaultBaseURL), config.DefaultBaseURL, publisher)
+
+		req := withUserID(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("  https://ya.ru  ")), "user-1")
+		h.CreateShortURL(httptest.NewRecorder(), req)
+
+		assert.Len(t, observer.events, 1)
+		event := observer.events[0]
+		assert.NotZero(t, event.TS)
+		assert.Equal(t, audit.ActionShorten, event.Action)
+		assert.Equal(t, "user-1", event.UserID)
+		assert.Equal(t, "https://ya.ru", event.URL)
+	})
+
+	t.Run("shorten via POST /api/shorten", func(t *testing.T) {
+		repo := &mockRepo{
+			saveFunc: func(_ string, _ model.URLRecord) error { return nil },
+			getByOriginalURLFunc: func(_ string) (string, model.URLRecord, bool, error) {
+				return "", model.URLRecord{}, false, nil
+			},
+		}
+		publisher, observer := newPublisher()
+		h := NewURLHandler(service.NewURLService(repo, config.DefaultBaseURL), config.DefaultBaseURL, publisher)
+
+		req := withUserID(httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://ya.ru"}`)), "user-2")
+		h.CreateShortenJSON(httptest.NewRecorder(), req)
+
+		assert.Len(t, observer.events, 1)
+		event := observer.events[0]
+		assert.NotZero(t, event.TS)
+		assert.Equal(t, audit.ActionShorten, event.Action)
+		assert.Equal(t, "user-2", event.UserID)
+		assert.Equal(t, "https://ya.ru", event.URL)
+	})
+
+	t.Run("follow via GET /{id}", func(t *testing.T) {
+		repo := &mockRepo{
+			getFunc: func(_ string) (model.URLRecord, bool, error) {
+				return model.URLRecord{OriginalURL: "https://ya.ru"}, true, nil
+			},
+		}
+		publisher, observer := newPublisher()
+		h := NewURLHandler(service.NewURLService(repo, config.DefaultBaseURL), config.DefaultBaseURL, publisher)
+
+		req := withUserID(httptest.NewRequest(http.MethodGet, "/abc123", nil), "user-3")
+		h.RedirectToOriginal(httptest.NewRecorder(), req)
+
+		assert.Len(t, observer.events, 1)
+		event := observer.events[0]
+		assert.NotZero(t, event.TS)
+		assert.Equal(t, audit.ActionFollow, event.Action)
+		assert.Equal(t, "user-3", event.UserID)
+		assert.Equal(t, "https://ya.ru", event.URL)
+	})
+
+	t.Run("failed request is not audited", func(t *testing.T) {
+		repo := &mockRepo{
+			getFunc: func(_ string) (model.URLRecord, bool, error) {
+				return model.URLRecord{}, false, nil
+			},
+		}
+		publisher, observer := newPublisher()
+		h := NewURLHandler(service.NewURLService(repo, config.DefaultBaseURL), config.DefaultBaseURL, publisher)
+
+		req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+		h.RedirectToOriginal(httptest.NewRecorder(), req)
+
+		assert.Empty(t, observer.events)
+	})
 }

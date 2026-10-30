@@ -9,6 +9,7 @@ import (
 
 type contextKey string
 
+// UserIDKey — ключ контекста, под которым AuthMiddleware сохраняет userID.
 const UserIDKey contextKey = "userID"
 
 // AuthMiddleware проверяет или создаёт куку с userID.

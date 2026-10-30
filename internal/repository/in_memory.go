@@ -76,14 +76,13 @@ func (r *InMemoryRepo) GetByOriginalURL(originalURL string) (string, model.URLRe
 func (r *InMemoryRepo) GetByUserID(userID string) ([]model.URLRecord, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-
-	var result []model.URLRecord
+	out := make([]model.URLRecord, 0, 16)
 	for _, rec := range r.store {
 		if rec.UserID == userID {
-			result = append(result, rec)
+			out = append(out, rec)
 		}
 	}
-	return result, nil
+	return out, nil
 }
 
 // BatchDeleteByUserID помечает URL пользователя как удалённые.

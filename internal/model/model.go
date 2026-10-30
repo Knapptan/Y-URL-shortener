@@ -20,8 +20,11 @@ type StorageRecord struct {
 // JobStatus — состояние асинхронной задачи.
 type JobStatus string
 
+// Статусы асинхронной задачи.
 const (
-	JobStatusPending   JobStatus = "pending"
+	// JobStatusPending — задача ожидает обработки.
+	JobStatusPending JobStatus = "pending"
+	// JobStatusCompleted — задача завершена.
 	JobStatusCompleted JobStatus = "completed"
 )
 

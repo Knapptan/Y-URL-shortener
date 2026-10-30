@@ -133,7 +133,8 @@ func (r *FileRepository) GetByUserID(userID string) ([]model.URLRecord, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var result []model.URLRecord
+	// Preallocate под типичный размер выборки — избегаем realloc'ов.
+	result := make([]model.URLRecord, 0, 16)
 	for _, rec := range r.data {
 		if rec.UserID == userID {
 			result = append(result, rec)
