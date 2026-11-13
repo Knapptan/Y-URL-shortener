@@ -131,7 +131,7 @@ func (o *HTTPObserver) sendOnce(event Event) (ok, retry bool) {
 		slog.Warn("audit http post failed", "url", o.url, "error", err)
 		return false, true
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return true, false

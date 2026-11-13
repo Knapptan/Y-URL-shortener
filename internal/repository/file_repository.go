@@ -38,7 +38,7 @@ func (r *FileRepository) load() error {
 		}
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var records []model.StorageRecord
 	if err := json.NewDecoder(file).Decode(&records); err != nil {
@@ -71,7 +71,7 @@ func (r *FileRepository) saveToFile() error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")

@@ -1,3 +1,5 @@
+// Package app обеспечивает инициализацию приложения: загрузку конфигурации,
+// настройку репозиториев, построение роутера chi и запуск HTTP-сервера.
 package app
 
 import (
@@ -88,14 +90,14 @@ func Run(cfg *config.Config) error {
 			slog.Error("failed to init audit file", "error", err)
 			return err
 		}
-		defer fileObserver.Close()
+		defer func() { _ = fileObserver.Close() }()
 		publisher.Register(fileObserver)
 		slog.Info("audit: file enabled", "path", cfg.AuditFile)
 	}
 
 	if cfg.AuditURL != "" {
 		httpObserver := audit.NewHTTPObserver(cfg.AuditURL)
-		defer httpObserver.Close()
+		defer func() { _ = httpObserver.Close() }()
 		publisher.Register(httpObserver)
 		slog.Info("audit: http enabled", "url", cfg.AuditURL)
 	}

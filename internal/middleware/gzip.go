@@ -19,7 +19,7 @@ func getGzipWriter(w io.Writer) *gzip.Writer {
 }
 
 func putGzipWriter(gz *gzip.Writer) {
-	gz.Close()
+	_ = gz.Close()
 	gzipWriterPool.Put(gz)
 }
 
@@ -41,7 +41,7 @@ func GzipMiddleware(next http.Handler) http.Handler {
 				http.Error(w, "Failed to decompress request body", http.StatusBadRequest)
 				return
 			}
-			defer gzReader.Close()
+			defer func() { _ = gzReader.Close() }()
 			r.Body = gzReader
 		}
 		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
@@ -49,7 +49,7 @@ func GzipMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		gzw := &gzipResponseWriter{ResponseWriter: w, origWriter: w}
-		defer gzw.Close()
+		defer func() { _ = gzw.Close() }()
 		next.ServeHTTP(gzw, r)
 	})
 }
