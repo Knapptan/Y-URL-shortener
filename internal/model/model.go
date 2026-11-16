@@ -31,6 +31,7 @@ const (
 )
 
 // AsyncJob — задача асинхронного сокращения URL.
+// generate:reset
 type AsyncJob struct {
 	CorrelationID string
 	URL           string
