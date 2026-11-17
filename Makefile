@@ -6,7 +6,7 @@ LDFLAGS := -X main.buildVersion=$(VERSION) \
            -X main.buildDate=$(DATE) \
            -X main.buildCommit=$(COMMIT)
 
-.PHONY: build run test
+.PHONY: build run test statictests
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o shortener ./cmd/shortener
@@ -17,5 +17,5 @@ run:
 test:
 	go test ./...
 
-	statictests:
+statictests:
 	go vet -vettool=statictest ./...
