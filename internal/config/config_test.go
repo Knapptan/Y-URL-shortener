@@ -25,6 +25,8 @@ func TestResolveConfig(t *testing.T) {
 		envAuditFile      string
 		flagAuditURL      string
 		envAuditURL       string
+		flagHTTPS         bool
+		envHTTPS          bool
 		expectedServer    string
 		expectedBase      string
 		expectedFile      string
@@ -32,6 +34,7 @@ func TestResolveConfig(t *testing.T) {
 		expectedSecret    string
 		expectedAuditFile string
 		expectedAuditURL  string
+		expectedHTTPS     bool
 	}{
 		{
 			name:           "no flags, no env",
@@ -45,6 +48,7 @@ func TestResolveConfig(t *testing.T) {
 			expectedFile:   DefaultFileStoragePath,
 			expectedDSN:    "",
 			expectedSecret: DefaultSecretKey,
+			expectedHTTPS:  false,
 		},
 		{
 			name:           "flag only",
@@ -58,6 +62,7 @@ func TestResolveConfig(t *testing.T) {
 			expectedFile:   DefaultFileStoragePath,
 			expectedDSN:    "postgres://user:pass@localhost/db",
 			expectedSecret: "flag-secret",
+			expectedHTTPS:  false,
 		},
 		{
 			name:           "env wins",
@@ -71,6 +76,7 @@ func TestResolveConfig(t *testing.T) {
 			expectedBase:   "http://localhost:9999",
 			expectedFile:   DefaultFileStoragePath,
 			expectedSecret: "env-secret",
+			expectedHTTPS:  false,
 		},
 		{
 			name:              "audit flags only",
@@ -85,6 +91,7 @@ func TestResolveConfig(t *testing.T) {
 			expectedSecret:    DefaultSecretKey,
 			expectedAuditFile: "/tmp/audit.log",
 			expectedAuditURL:  "http://audit.local/events",
+			expectedHTTPS:     false,
 		},
 		{
 			name:              "audit env wins over flags",
@@ -101,6 +108,7 @@ func TestResolveConfig(t *testing.T) {
 			expectedSecret:    DefaultSecretKey,
 			expectedAuditFile: "/tmp/env-audit.log",
 			expectedAuditURL:  "http://env-audit.local/events",
+			expectedHTTPS:     false,
 		},
 		{
 			name:              "audit disabled by default",
@@ -113,6 +121,44 @@ func TestResolveConfig(t *testing.T) {
 			expectedSecret:    DefaultSecretKey,
 			expectedAuditFile: "",
 			expectedAuditURL:  "",
+			expectedHTTPS:     false,
+		},
+		{
+			name:           "https via flag",
+			flagServer:     DefaultServerAddress,
+			flagBase:       DefaultBaseURL,
+			flagSecret:     DefaultSecretKey,
+			flagHTTPS:      true,
+			expectedServer: DefaultServerAddress,
+			expectedBase:   DefaultBaseURL,
+			expectedFile:   DefaultFileStoragePath,
+			expectedSecret: DefaultSecretKey,
+			expectedHTTPS:  true,
+		},
+		{
+			name:           "https via env",
+			flagServer:     DefaultServerAddress,
+			flagBase:       DefaultBaseURL,
+			flagSecret:     DefaultSecretKey,
+			envHTTPS:       true,
+			expectedServer: DefaultServerAddress,
+			expectedBase:   DefaultBaseURL,
+			expectedFile:   DefaultFileStoragePath,
+			expectedSecret: DefaultSecretKey,
+			expectedHTTPS:  true,
+		},
+		{
+			name:           "https flag and env",
+			flagServer:     DefaultServerAddress,
+			flagBase:       DefaultBaseURL,
+			flagSecret:     DefaultSecretKey,
+			flagHTTPS:      true,
+			envHTTPS:       true,
+			expectedServer: DefaultServerAddress,
+			expectedBase:   DefaultBaseURL,
+			expectedFile:   DefaultFileStoragePath,
+			expectedSecret: DefaultSecretKey,
+			expectedHTTPS:  true,
 		},
 	}
 
@@ -121,8 +167,9 @@ func TestResolveConfig(t *testing.T) {
 			cfg := resolveConfig(
 				tt.flagServer, tt.flagBase, tt.envServer, tt.envBase,
 				tt.flagFile, tt.envFile, tt.flagDSN, tt.envDSN,
-				tt.flagSecret, tt.envSecret, tt.flagAuditFile, tt.envAuditFile,
-				tt.flagAuditURL, tt.envAuditURL,
+				tt.flagSecret, tt.envSecret,
+				tt.flagAuditFile, tt.envAuditFile, tt.flagAuditURL, tt.envAuditURL,
+				tt.flagHTTPS, tt.envHTTPS,
 			)
 			assert.Equal(t, tt.expectedServer, cfg.ServerAddress)
 			assert.Equal(t, tt.expectedBase, cfg.BaseURL)
@@ -131,6 +178,7 @@ func TestResolveConfig(t *testing.T) {
 			assert.Equal(t, tt.expectedSecret, cfg.SecretKey)
 			assert.Equal(t, tt.expectedAuditFile, cfg.AuditFile)
 			assert.Equal(t, tt.expectedAuditURL, cfg.AuditURL)
+			assert.Equal(t, tt.expectedHTTPS, cfg.EnableHTTPS)
 		})
 	}
 }
@@ -141,7 +189,7 @@ func TestParseFlags(t *testing.T) {
 
 	t.Run("flag overrides default", func(t *testing.T) {
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-		os.Args = []string{"cmd", "-a", "localhost:8888", "-b", "http://localhost:8888", "-s", "my-secret"}
+		os.Args = []string{"cmd", "-a", "localhost:8888", "-b", "http://localhost:8888", "-k", "my-secret"}
 		t.Setenv(EnvServerAddress, "")
 		t.Setenv(EnvBaseURL, "")
 		t.Setenv(EnvFileStoragePath, "")
@@ -149,16 +197,18 @@ func TestParseFlags(t *testing.T) {
 		t.Setenv(EnvSecretKey, "")
 		t.Setenv(EnvAuditFile, "")
 		t.Setenv(EnvAuditURL, "")
+		t.Setenv(EnvEnableHTTPS, "")
 		cfg := ParseFlags()
 		assert.Equal(t, "localhost:8888", cfg.ServerAddress)
 		assert.Equal(t, "http://localhost:8888", cfg.BaseURL)
 		assert.Equal(t, DefaultFileStoragePath, cfg.FileStoragePath)
 		assert.Equal(t, "my-secret", cfg.SecretKey)
+		assert.False(t, cfg.EnableHTTPS)
 	})
 
 	t.Run("env overrides flag", func(t *testing.T) {
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-		os.Args = []string{"cmd", "-a", "localhost:8888", "-b", "http://localhost:8888", "-s", "flag-secret"}
+		os.Args = []string{"cmd", "-a", "localhost:8888", "-b", "http://localhost:8888", "-k", "flag-secret"}
 		t.Setenv(EnvServerAddress, "localhost:9999")
 		t.Setenv(EnvBaseURL, "http://localhost:9999")
 		t.Setenv(EnvFileStoragePath, "")
@@ -166,11 +216,13 @@ func TestParseFlags(t *testing.T) {
 		t.Setenv(EnvSecretKey, "env-secret")
 		t.Setenv(EnvAuditFile, "")
 		t.Setenv(EnvAuditURL, "")
+		t.Setenv(EnvEnableHTTPS, "")
 		cfg := ParseFlags()
 		assert.Equal(t, "localhost:9999", cfg.ServerAddress)
 		assert.Equal(t, "http://localhost:9999", cfg.BaseURL)
 		assert.Equal(t, DefaultFileStoragePath, cfg.FileStoragePath)
 		assert.Equal(t, "env-secret", cfg.SecretKey)
+		assert.False(t, cfg.EnableHTTPS)
 	})
 
 	t.Run("audit flags and env", func(t *testing.T) {
@@ -183,6 +235,7 @@ func TestParseFlags(t *testing.T) {
 		t.Setenv(EnvSecretKey, "")
 		t.Setenv(EnvAuditFile, "")
 		t.Setenv(EnvAuditURL, "")
+		t.Setenv(EnvEnableHTTPS, "")
 		cfg := ParseFlags()
 		assert.Equal(t, "/tmp/flag-audit.log", cfg.AuditFile)
 		assert.Equal(t, "http://flag-audit.local/events", cfg.AuditURL)
@@ -194,6 +247,36 @@ func TestParseFlags(t *testing.T) {
 		cfg = ParseFlags()
 		assert.Equal(t, "/tmp/env-audit.log", cfg.AuditFile)
 		assert.Equal(t, "http://env-audit.local/events", cfg.AuditURL)
+	})
+
+	t.Run("https flag", func(t *testing.T) {
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		os.Args = []string{"cmd", "-s"}
+		t.Setenv(EnvServerAddress, "")
+		t.Setenv(EnvBaseURL, "")
+		t.Setenv(EnvFileStoragePath, "")
+		t.Setenv(EnvDatabaseDSN, "")
+		t.Setenv(EnvSecretKey, "")
+		t.Setenv(EnvAuditFile, "")
+		t.Setenv(EnvAuditURL, "")
+		t.Setenv(EnvEnableHTTPS, "")
+		cfg := ParseFlags()
+		assert.True(t, cfg.EnableHTTPS)
+	})
+
+	t.Run("https env", func(t *testing.T) {
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		os.Args = []string{"cmd"}
+		t.Setenv(EnvServerAddress, "")
+		t.Setenv(EnvBaseURL, "")
+		t.Setenv(EnvFileStoragePath, "")
+		t.Setenv(EnvDatabaseDSN, "")
+		t.Setenv(EnvSecretKey, "")
+		t.Setenv(EnvAuditFile, "")
+		t.Setenv(EnvAuditURL, "")
+		t.Setenv(EnvEnableHTTPS, "true")
+		cfg := ParseFlags()
+		assert.True(t, cfg.EnableHTTPS)
 	})
 }
 
@@ -209,9 +292,11 @@ func TestParseFlagsDefaults(t *testing.T) {
 	t.Setenv(EnvFileStoragePath, "")
 	t.Setenv(EnvDatabaseDSN, "")
 	t.Setenv(EnvSecretKey, "")
+	t.Setenv(EnvEnableHTTPS, "")
 
 	cfg := ParseFlags()
 	assert.Equal(t, DefaultServerAddress, cfg.ServerAddress)
 	assert.Equal(t, DefaultBaseURL, cfg.BaseURL)
 	assert.Equal(t, DefaultSecretKey, cfg.SecretKey)
+	assert.False(t, cfg.EnableHTTPS)
 }

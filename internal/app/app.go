@@ -3,11 +3,15 @@
 package app
 
 import (
+	"crypto/tls"
 	"database/sql"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-migrate/migrate/v4"
@@ -16,6 +20,7 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/audit"
+	"github.com/Knapptan/Y-URL-shortener/internal/cert"
 	"github.com/Knapptan/Y-URL-shortener/internal/config"
 	"github.com/Knapptan/Y-URL-shortener/internal/handler"
 	"github.com/Knapptan/Y-URL-shortener/internal/middleware"
@@ -122,5 +127,51 @@ func Run(cfg *config.Config) error {
 	r.Get("/{id}", h.RedirectToOriginal)
 
 	slog.Info("Starting server", "address", cfg.ServerAddress)
-	return http.ListenAndServe(cfg.ServerAddress, r)
+	// Запуск сервера: HTTPS или HTTP в зависимости от конфигурации.
+	if cfg.EnableHTTPS {
+		return runHTTPS(cfg.ServerAddress, r)
+	}
+	return runHTTP(cfg.ServerAddress, r)
+}
+
+// runHTTP запускает обычный HTTP-сервер.
+func runHTTP(addr string, handler http.Handler) error {
+	slog.Info("starting HTTP server", "addr", addr)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// runHTTPS запускает HTTPS-сервер с самоподписанным сертификатом.
+func runHTTPS(addr string, handler http.Handler) error {
+	cert, err := cert.GenerateSelfSigned()
+	if err != nil {
+		return fmt.Errorf("generate self-signed cert: %w", err)
+	}
+
+	cfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	ln, err := tls.Listen("tcp", addr, cfg)
+	if err != nil {
+		return fmt.Errorf("tls listen: %w", err)
+	}
+
+	slog.Info("starting HTTPS server (self-signed cert)", "addr", addr)
+	srv := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
