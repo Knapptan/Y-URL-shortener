@@ -28,3 +28,7 @@ profiles/raw_result/
 profiles/raw_old/
 profiles/base_bench.txt
 coverage.out
+# local config (copy from config.json.example)
+config.json
+# binaries
+staticlint

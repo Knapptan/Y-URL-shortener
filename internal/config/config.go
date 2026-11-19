@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"strconv"
 )
 
 // Константы конфигурации: значения по умолчанию и имена переменных окружения.
@@ -60,153 +62,134 @@ type Config struct {
 	EnableHTTPS     bool
 }
 
-// fileConfig — структура для чтения JSON-файла конфигурации.
-// Теги соответствуют полям из ТЗ инкремента 25.
+// fileConfig — JSON-представление конфигурации из -c.
 type fileConfig struct {
 	ServerAddress   string `json:"server_address"`
 	BaseURL         string `json:"base_url"`
 	FileStoragePath string `json:"file_storage_path"`
 	DatabaseDSN     string `json:"database_dsn"`
-	SecretKey       string `json:"secret_key,omitempty"`
-	AuditFile       string `json:"audit_file,omitempty"`
-	AuditURL        string `json:"audit_url,omitempty"`
+	SecretKey       string `json:"secret_key"`
+	AuditFile       string `json:"audit_file"`
+	AuditURL        string `json:"audit_url"`
 	EnableHTTPS     bool   `json:"enable_https"`
 }
 
 // loadFileConfig читает JSON-файл конфигурации.
 func loadFileConfig(path string) (*fileConfig, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("open config file: %w", err)
+		return nil, err
 	}
-	defer func() { _ = f.Close() }()
-
-	var cfg fileConfig
-	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("decode config file: %w", err)
+	var fc fileConfig
+	if err := json.Unmarshal(data, &fc); err != nil {
+		return nil, fmt.Errorf("parse json: %w", err)
 	}
-	return &cfg, nil
+	return &fc, nil
 }
 
-// pickString выбирает значение по приоритету:
-// env > flag (если задан и отличается от дефолта) > file > flag (если задан) > default.
-func pickString(env, flagVal, def, fileVal string) string {
+// pick выбирает значение по приоритету:
+// env (если задан) > flag (если явно передан в CLI) > file > default.
+//
+// Ключевое отличие от наивной реализации: флаг считается «заданным»,
+// если его имя вернул flag.Visit — то есть пользователь действительно
+// передал его в командной строке. Это позволяет отличить
+// «-a localhost:8080 передали явно» от «-a не передавали,
+// значение совпало с дефолтом».
+func pick(env, flagVal string, flagSet bool, fileVal, def string) string {
 	if env != "" {
 		return env
 	}
-	// Флаг явно задан и не совпадает с дефолтом.
-	if flagVal != "" && flagVal != def {
+	if flagSet {
 		return flagVal
 	}
-	// Значение из файла.
 	if fileVal != "" {
 		return fileVal
-	}
-	// Флаг задан, но равен дефолту.
-	if flagVal != "" {
-		return flagVal
 	}
 	return def
 }
 
-// pickBool выбирает булево значение по приоритету:
-// env=true > flag=true > file=true > false.
-func pickBool(flagVal, envVal, fileVal bool) bool {
-	return envVal || flagVal || fileVal
+// pickBool — булев аналог pick. envSet/flagSet показывают, было ли
+// значение задано явно (в env или CLI). Это позволяет отличить
+// «ENABLE_HTTPS не задан» от «ENABLE_HTTPS=false».
+func pickBool(envVal, envSet, flagVal, flagSet, fileVal bool) bool {
+	if envSet {
+		return envVal
+	}
+	if flagSet {
+		return flagVal
+	}
+	return fileVal
 }
 
-// resolveConfig собирает итоговую конфигурацию.
-func resolveConfig(
-	flagServer, flagBase, envServer, envBase string,
-	flagFile, envFile, flagDSN, envDSN string,
-	flagSecret, envSecret string,
-	flagAuditFile, envAuditFile, flagAuditURL, envAuditURL string,
-	flagEnableHTTPS, envEnableHTTPS bool,
-	fileCfg *fileConfig,
-) *Config {
-	fc := fileConfig{}
-	if fileCfg != nil {
-		fc = *fileCfg
+// envBool читает переменную окружения как bool.
+// Возвращает (значение, было ли переменная задана).
+func envBool(key string) (bool, bool) {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return false, false
 	}
-
-	server := pickString(envServer, flagServer, DefaultServerAddress, fc.ServerAddress)
-	base := pickString(envBase, flagBase, DefaultBaseURL, fc.BaseURL)
-	filePath := pickString(envFile, flagFile, DefaultFileStoragePath, fc.FileStoragePath)
-	dsn := pickString(envDSN, flagDSN, DefaultDatabaseDSN, fc.DatabaseDSN)
-	secret := pickString(envSecret, flagSecret, DefaultSecretKey, fc.SecretKey)
-	auditFile := pickString(envAuditFile, flagAuditFile, "", fc.AuditFile)
-	auditURL := pickString(envAuditURL, flagAuditURL, "", fc.AuditURL)
-	enableHTTPS := pickBool(flagEnableHTTPS, envEnableHTTPS, fc.EnableHTTPS)
-
-	return &Config{
-		ServerAddress:   server,
-		BaseURL:         base,
-		FileStoragePath: filePath,
-		DatabaseDSN:     dsn,
-		SecretKey:       secret,
-		AuditFile:       auditFile,
-		AuditURL:        auditURL,
-		EnableHTTPS:     enableHTTPS,
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, false
 	}
+	return b, true
 }
 
-// ParseFlags парсит флаги CLI, переменные окружения и JSON-файл конфигурации.
+// ParseFlags парсит флаги, читает env и файл, собирает конфиг
+// с приоритетом: env > flag (явно задан) > file > default.
 func ParseFlags() *Config {
 	var (
-		serverAddress string
-		baseURL       string
-		filePath      string
-		databaseDSN   string
-		secretKey     string
-		auditFile     string
-		auditURL      string
-		configPath    string
-		enableHTTPS   bool
+		serverAddress   string
+		baseURL         string
+		fileStoragePath string
+		databaseDSN     string
+		secretKey       string
+		auditFile       string
+		auditURL        string
+		configPath      string
+		enableHTTPS     bool
 	)
+
 	flag.StringVar(&serverAddress, "a", DefaultServerAddress, "address and port")
 	flag.StringVar(&baseURL, "b", DefaultBaseURL, "base URL")
-	flag.StringVar(&filePath, "f", DefaultFileStoragePath, "file path for storage")
+	flag.StringVar(&fileStoragePath, "f", DefaultFileStoragePath, "file path for storage")
 	flag.StringVar(&databaseDSN, "d", DefaultDatabaseDSN, "database DSN")
-	flag.StringVar(&secretKey, "k", DefaultSecretKey, "secret key for signing cookies")
+	flag.StringVar(&secretKey, "s", DefaultSecretKey, "secret key for signing cookies")
 	flag.StringVar(&auditFile, "audit-file", "", "audit log file path")
 	flag.StringVar(&auditURL, "audit-url", "", "audit remote server URL")
-	flag.BoolVar(&enableHTTPS, "s", false, "enable HTTPS")
-	flag.StringVar(&configPath, "c", "", "config file path (JSON)")
-	flag.StringVar(&configPath, "config", "", "config file path (JSON)")
+	flag.StringVar(&configPath, "c", "", "path to config file")
+	flag.BoolVar(&enableHTTPS, "https", false, "enable HTTPS")
 	flag.Parse()
 
-	// Определяем путь к конфиг-файлу: флаг > env.
-	if configPath == "" {
-		configPath = os.Getenv(EnvConfig)
-	}
+	// Собираем множество имён флагов, реально переданных в CLI.
+	setFlags := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) {
+		setFlags[f.Name] = true
+	})
 
-	// Загружаем конфиг-файл, если путь задан.
-	var fileCfg *fileConfig
+	// Путь к файлу тоже может прийти из env (EnvConfig), если флаг не задан.
+	configPath = pick(os.Getenv(EnvConfig), configPath, setFlags["c"], "", "")
+
+	// Читаем файл, если путь известен.
+	var fileCfg fileConfig
 	if configPath != "" {
-		loaded, err := loadFileConfig(configPath)
+		fc, err := loadFileConfig(configPath)
 		if err != nil {
-			// Не падаем: файл может быть недоступен, продолжаем с флагами/env.
-			fmt.Fprintf(os.Stderr, "config: failed to load %q: %v\n", configPath, err)
-		} else {
-			fileCfg = loaded
+			log.Fatalf("load config file %q: %v", configPath, err)
 		}
+		fileCfg = *fc
 	}
 
-	envServer, _ := os.LookupEnv(EnvServerAddress)
-	envBase, _ := os.LookupEnv(EnvBaseURL)
-	envFile, _ := os.LookupEnv(EnvFileStoragePath)
-	envDSN, _ := os.LookupEnv(EnvDatabaseDSN)
-	envSecret, _ := os.LookupEnv(EnvSecretKey)
-	envAuditFile, _ := os.LookupEnv(EnvAuditFile)
-	envAuditURL, _ := os.LookupEnv(EnvAuditURL)
-	envHTTPS := os.Getenv(EnvEnableHTTPS) == "true" || os.Getenv(EnvEnableHTTPS) == "1"
+	envHTTPSVal, envHTTPSSet := envBool(EnvEnableHTTPS)
 
-	return resolveConfig(
-		serverAddress, baseURL, envServer, envBase,
-		filePath, envFile, databaseDSN, envDSN,
-		secretKey, envSecret,
-		auditFile, envAuditFile, auditURL, envAuditURL,
-		enableHTTPS, envHTTPS,
-		fileCfg,
-	)
+	return &Config{
+		ServerAddress:   pick(os.Getenv(EnvServerAddress), serverAddress, setFlags["a"], fileCfg.ServerAddress, DefaultServerAddress),
+		BaseURL:         pick(os.Getenv(EnvBaseURL), baseURL, setFlags["b"], fileCfg.BaseURL, DefaultBaseURL),
+		FileStoragePath: pick(os.Getenv(EnvFileStoragePath), fileStoragePath, setFlags["f"], fileCfg.FileStoragePath, DefaultFileStoragePath),
+		DatabaseDSN:     pick(os.Getenv(EnvDatabaseDSN), databaseDSN, setFlags["d"], fileCfg.DatabaseDSN, DefaultDatabaseDSN),
+		SecretKey:       pick(os.Getenv(EnvSecretKey), secretKey, setFlags["s"], fileCfg.SecretKey, DefaultSecretKey),
+		AuditFile:       pick(os.Getenv(EnvAuditFile), auditFile, setFlags["audit-file"], fileCfg.AuditFile, ""),
+		AuditURL:        pick(os.Getenv(EnvAuditURL), auditURL, setFlags["audit-url"], fileCfg.AuditURL, ""),
+		EnableHTTPS:     pickBool(envHTTPSVal, envHTTPSSet, enableHTTPS, setFlags["https"], fileCfg.EnableHTTPS),
+	}
 }

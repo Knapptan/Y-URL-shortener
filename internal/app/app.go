@@ -1,8 +1,10 @@
 // Package app обеспечивает инициализацию приложения: загрузку конфигурации,
-// настройку репозиториев, построение роутера chi и запуск HTTP-сервера.
+// настройку репозиториев, построение роутера chi и запуск HTTP/HTTPS-сервера
+// с корректным graceful shutdown по сигналам.
 package app
 
 import (
+	"context"
 	"crypto/tls"
 	"database/sql"
 	"errors"
@@ -10,7 +12,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -28,10 +32,15 @@ import (
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
 )
 
-// Run запускает HTTP-сервер.
+// shutdownTimeout — максимальное время ожидания завершения активных запросов.
+const shutdownTimeout = 30 * time.Second
+
+// Run запускает HTTP/HTTPS-сервер с graceful shutdown по сигналам
+// SIGTERM, SIGINT, SIGQUIT.
 func Run(cfg *config.Config) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
+	// === Репозиторий ===
 	var repo repository.URLRepository
 	var db *sql.DB
 
@@ -39,12 +48,10 @@ func Run(cfg *config.Config) error {
 		var err error
 		db, err = sql.Open("postgres", cfg.DatabaseDSN)
 		if err != nil {
-			slog.Error("Failed to open DB", "error", err)
-			return err
+			return fmt.Errorf("open DB: %w", err)
 		}
 		if err := db.Ping(); err != nil {
-			slog.Error("Failed to ping DB", "error", err)
-			return err
+			return fmt.Errorf("ping DB: %w", err)
 		}
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -52,25 +59,21 @@ func Run(cfg *config.Config) error {
 		}
 		m, err := migrate.New("file://"+filepath.Join(cwd, "migrations"), cfg.DatabaseDSN)
 		if err != nil {
-			slog.Error("Failed to init migrations", "error", err)
-			return err
+			return fmt.Errorf("init migrations: %w", err)
 		}
-		if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-			slog.Error("Failed to apply migrations", "error", err)
-			return err
+		if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+			return fmt.Errorf("apply migrations: %w", err)
 		}
 		dbRepo, err := repository.NewDBRepository(db)
 		if err != nil {
-			slog.Error("Failed to init DB repository", "error", err)
-			return err
+			return fmt.Errorf("init DB repository: %w", err)
 		}
 		repo = dbRepo
 		slog.Info("Using PostgreSQL storage")
 	} else if cfg.FileStoragePath != "" {
 		fileRepo, err := repository.NewFileRepository(cfg.FileStoragePath)
 		if err != nil {
-			slog.Error("Failed to init file storage", "error", err)
-			return err
+			return fmt.Errorf("init file storage: %w", err)
 		}
 		repo = fileRepo
 		slog.Info("Using file storage", "path", cfg.FileStoragePath)
@@ -79,34 +82,43 @@ func Run(cfg *config.Config) error {
 		slog.Info("Using in-memory storage")
 	}
 
-	defer func() {
-		if db != nil {
+	// Регистрируем деферы в обратном порядке приоритета закрытия:
+	// сначала наблюдатели аудита, затем БД.
+	if db != nil {
+		defer func() {
 			if err := db.Close(); err != nil {
-				slog.Error("Failed to close DB", "error", err)
+				slog.Error("close DB", "error", err)
 			}
-		}
-	}()
+		}()
+	}
 
+	// === Аудит ===
 	publisher := audit.NewPublisher()
-
 	if cfg.AuditFile != "" {
 		fileObserver, err := audit.NewFileObserver(cfg.AuditFile)
 		if err != nil {
-			slog.Error("failed to init audit file", "error", err)
-			return err
+			return fmt.Errorf("init audit file: %w", err)
 		}
-		defer func() { _ = fileObserver.Close() }()
+		defer func() {
+			if err := fileObserver.Close(); err != nil {
+				slog.Error("close audit file", "error", err)
+			}
+		}()
 		publisher.Register(fileObserver)
 		slog.Info("audit: file enabled", "path", cfg.AuditFile)
 	}
-
 	if cfg.AuditURL != "" {
 		httpObserver := audit.NewHTTPObserver(cfg.AuditURL)
-		defer func() { _ = httpObserver.Close() }()
+		defer func() {
+			if err := httpObserver.Close(); err != nil {
+				slog.Error("close audit http", "error", err)
+			}
+		}()
 		publisher.Register(httpObserver)
 		slog.Info("audit: http enabled", "url", cfg.AuditURL)
 	}
 
+	// === Сервис и хендлеры ===
 	svc := service.NewURLService(repo, cfg.BaseURL)
 	h := handler.NewURLHandler(svc, cfg.BaseURL, publisher)
 	pingHandler := handler.NewPingHandler(db)
@@ -118,60 +130,80 @@ func Run(cfg *config.Config) error {
 
 	r.Get("/ping", pingHandler.Ping)
 	r.Post("/", h.CreateShortURL)
+	r.Get("/{id}", h.RedirectToOriginal)
 	r.Post("/api/shorten", h.CreateShortenJSON)
 	r.Post("/api/shorten/batch", h.CreateShortenBatch)
 	r.Post("/api/shorten/async", h.AsyncShorten)
 	r.Get("/api/shorten/result/{correlation_id}", h.GetAsyncResult)
 	r.Get("/api/user/urls", h.GetUserURLs)
 	r.Delete("/api/user/urls", h.DeleteUserURLs)
-	r.Get("/{id}", h.RedirectToOriginal)
 
-	slog.Info("Starting server", "address", cfg.ServerAddress)
-	// Запуск сервера: HTTPS или HTTP в зависимости от конфигурации.
-	if cfg.EnableHTTPS {
-		return runHTTPS(cfg.ServerAddress, r)
-	}
-	return runHTTP(cfg.ServerAddress, r)
-}
-
-// runHTTP запускает обычный HTTP-сервер.
-func runHTTP(addr string, handler http.Handler) error {
-	slog.Info("starting HTTP server", "addr", addr)
+	// === HTTP(S)-сервер ===
 	srv := &http.Server{
-		Addr:              addr,
-		Handler:           handler,
+		Addr:              cfg.ServerAddress,
+		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+
+	// Контекст, отменяемый по SIGTERM/SIGINT/SIGQUIT.
+	ctx, stop := signal.NotifyContext(context.Background(),
+		syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
+	defer stop()
+
+	// Запускаем сервер в фоновой горутине.
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serve(srv, cfg.EnableHTTPS)
+	}()
+
+	// Ждём сигнал или фатальную ошибку сервера.
+	select {
+	case <-ctx.Done():
+		slog.Info("shutdown signal received, draining connections...")
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("server: %w", err)
+		}
+		return nil
 	}
+
+	// Graceful shutdown: перестаём принимать новые соединения,
+	// ждём завершения активных запросов (до shutdownTimeout).
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("graceful shutdown failed, forcing close", "error", err)
+		_ = srv.Close()
+	}
+
+	slog.Info("shutdown complete")
+
+	// Деферы выполнятся при выходе из Run:
+	// fileObserver.Close() — дождётся записи всех событий в файл;
+	// httpObserver.Close() — дождётся отправки всех событий;
+	// db.Close() — закроет соединения с БД.
 	return nil
 }
 
-// runHTTPS запускает HTTPS-сервер с самоподписанным сертификатом.
-func runHTTPS(addr string, handler http.Handler) error {
-	cert, err := cert.GenerateSelfSigned()
-	if err != nil {
-		return fmt.Errorf("generate self-signed cert: %w", err)
+// serve запускает сервер в HTTP или HTTPS режиме.
+func serve(srv *http.Server, useTLS bool) error {
+	if useTLS {
+		c, err := cert.GenerateSelfSigned()
+		if err != nil {
+			return fmt.Errorf("generate cert: %w", err)
+		}
+		srv.TLSConfig = &tls.Config{
+			Certificates: []tls.Certificate{c},
+			MinVersion:   tls.VersionTLS12,
+		}
+		ln, err := tls.Listen("tcp", srv.Addr, srv.TLSConfig)
+		if err != nil {
+			return fmt.Errorf("tls listen: %w", err)
+		}
+		slog.Info("starting HTTPS server", "addr", srv.Addr)
+		return srv.Serve(ln)
 	}
-
-	cfg := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-	}
-
-	ln, err := tls.Listen("tcp", addr, cfg)
-	if err != nil {
-		return fmt.Errorf("tls listen: %w", err)
-	}
-
-	slog.Info("starting HTTPS server (self-signed cert)", "addr", addr)
-	srv := &http.Server{
-		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
+	slog.Info("starting HTTP server", "addr", srv.Addr)
+	return srv.ListenAndServe()
 }
