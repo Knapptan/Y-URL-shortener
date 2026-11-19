@@ -38,6 +38,9 @@ const (
 	EnvAuditFile = "AUDIT_FILE"
 	// EnvAuditURL — имя переменной окружения для URL удалённого приёмника аудита.
 	EnvAuditURL = "AUDIT_URL"
+
+	// EnvEnableHTTPS — имя переменной окружения для включения HTTPS.
+	EnvEnableHTTPS = "ENABLE_HTTPS"
 )
 
 // Config хранит настройки сервиса.
@@ -49,24 +52,17 @@ type Config struct {
 	SecretKey       string
 	AuditFile       string
 	AuditURL        string
+	EnableHTTPS     bool
 }
 
-// BuildConfig определяет конфигурацию на основе значений из флагов и переменных окружения.
-// Приоритет: переменная окружения > флаг > значение по умолчанию.
-func BuildConfig(flagServerAddress, flagBaseURL string) *Config {
-	return &Config{
-		ServerAddress: DefaultServerAddress,
-		BaseURL:       DefaultBaseURL,
-	}
-}
-
-// resolveConfig определяет итоговые значения с учётом приоритета:
-// переменная окружения > переданный флаг > значение по умолчанию.
+// resolveConfig собирает итоговую конфигурацию по приоритету:
+// env > флаг > дефолт.
 func resolveConfig(
-	flagServer, flagBase, envServer, envBase,
-	flagFile, envFile, flagDSN, envDSN,
-	flagSecret, envSecret, flagAuditFile, envAuditFile,
-	flagAuditURL, envAuditURL string,
+	flagServer, flagBase, envServer, envBase string,
+	flagFile, envFile, flagDSN, envDSN string,
+	flagSecret, envSecret string,
+	flagAuditFile, envAuditFile, flagAuditURL, envAuditURL string,
+	flagEnableHTTPS, envEnableHTTPS bool,
 ) *Config {
 	server := flagServer
 	if envServer != "" {
@@ -102,6 +98,10 @@ func resolveConfig(
 	if envAuditURL != "" {
 		auditURL = envAuditURL
 	}
+
+	// HTTPS включается, если задан флаг -s или ENABLE_HTTPS=true.
+	enableHTTPS := flagEnableHTTPS || envEnableHTTPS
+
 	return &Config{
 		ServerAddress:   server,
 		BaseURL:         base,
@@ -110,11 +110,11 @@ func resolveConfig(
 		SecretKey:       secret,
 		AuditFile:       auditFile,
 		AuditURL:        auditURL,
+		EnableHTTPS:     enableHTTPS,
 	}
 }
 
-// ParseFlags парсит флаги командной строки и переменные окружения,
-// возвращает конфигурацию с учётом приоритета.
+// ParseFlags парсит флаги CLI и переменные окружения.
 func ParseFlags() *Config {
 	var (
 		serverAddress string
@@ -124,14 +124,18 @@ func ParseFlags() *Config {
 		secretKey     string
 		auditFile     string
 		auditURL      string
+		enableHTTPS   bool
 	)
 	flag.StringVar(&serverAddress, "a", DefaultServerAddress, "address and port")
 	flag.StringVar(&baseURL, "b", DefaultBaseURL, "base URL")
 	flag.StringVar(&filePath, "f", DefaultFileStoragePath, "file path for storage")
 	flag.StringVar(&databaseDSN, "d", DefaultDatabaseDSN, "database DSN")
-	flag.StringVar(&secretKey, "s", DefaultSecretKey, "secret key for signing cookies")
+	// Secret key — переименован с -s на -k, чтобы освободить -s под HTTPS.
+	flag.StringVar(&secretKey, "k", DefaultSecretKey, "secret key for signing cookies")
 	flag.StringVar(&auditFile, "audit-file", "", "audit log file path")
 	flag.StringVar(&auditURL, "audit-url", "", "audit remote server URL")
+	// -s — включение HTTPS (по ТЗ инкремента).
+	flag.BoolVar(&enableHTTPS, "s", false, "enable HTTPS")
 	flag.Parse()
 
 	envServer, _ := os.LookupEnv(EnvServerAddress)
@@ -141,11 +145,13 @@ func ParseFlags() *Config {
 	envSecret, _ := os.LookupEnv(EnvSecretKey)
 	envAuditFile, _ := os.LookupEnv(EnvAuditFile)
 	envAuditURL, _ := os.LookupEnv(EnvAuditURL)
+	envHTTPS := os.Getenv(EnvEnableHTTPS) == "true" || os.Getenv(EnvEnableHTTPS) == "1"
 
 	return resolveConfig(
 		serverAddress, baseURL, envServer, envBase,
 		filePath, envFile, databaseDSN, envDSN,
-		secretKey, envSecret, auditFile, envAuditFile,
-		auditURL, envAuditURL,
+		secretKey, envSecret,
+		auditFile, envAuditFile, auditURL, envAuditURL,
+		enableHTTPS, envHTTPS,
 	)
 }
