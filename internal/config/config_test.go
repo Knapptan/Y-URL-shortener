@@ -170,6 +170,7 @@ func TestResolveConfig(t *testing.T) {
 				tt.flagSecret, tt.envSecret,
 				tt.flagAuditFile, tt.envAuditFile, tt.flagAuditURL, tt.envAuditURL,
 				tt.flagHTTPS, tt.envHTTPS,
+				nil,
 			)
 			assert.Equal(t, tt.expectedServer, cfg.ServerAddress)
 			assert.Equal(t, tt.expectedBase, cfg.BaseURL)
@@ -299,4 +300,64 @@ func TestParseFlagsDefaults(t *testing.T) {
 	assert.Equal(t, DefaultBaseURL, cfg.BaseURL)
 	assert.Equal(t, DefaultSecretKey, cfg.SecretKey)
 	assert.False(t, cfg.EnableHTTPS)
+}
+
+func TestResolveConfig_File(t *testing.T) {
+	// Без env и без флагов — используются значения из файла.
+	fileCfg := &fileConfig{
+		ServerAddress:   "from-file:9090",
+		BaseURL:         "http://from-file",
+		FileStoragePath: "/from/file.db",
+		DatabaseDSN:     "postgres://from-file/db",
+		SecretKey:       "file-secret",
+		EnableHTTPS:     true,
+	}
+	cfg := resolveConfig(
+		DefaultServerAddress, DefaultBaseURL, "", "",
+		DefaultFileStoragePath, "", DefaultDatabaseDSN, "",
+		DefaultSecretKey, "",
+		"", "", "", "",
+		false, false,
+		fileCfg,
+	)
+	assert.Equal(t, "from-file:9090", cfg.ServerAddress)
+	assert.Equal(t, "http://from-file", cfg.BaseURL)
+	assert.Equal(t, "/from/file.db", cfg.FileStoragePath)
+	assert.Equal(t, "postgres://from-file/db", cfg.DatabaseDSN)
+	assert.Equal(t, "file-secret", cfg.SecretKey)
+	assert.True(t, cfg.EnableHTTPS)
+}
+
+func TestResolveConfig_FlagOverridesFile(t *testing.T) {
+	fileCfg := &fileConfig{
+		ServerAddress: "from-file:9090",
+		EnableHTTPS:   true,
+	}
+	cfg := resolveConfig(
+		"from-flag:7070", DefaultBaseURL, "", "",
+		DefaultFileStoragePath, "", DefaultDatabaseDSN, "",
+		DefaultSecretKey, "",
+		"", "", "", "",
+		false, false,
+		fileCfg,
+	)
+	assert.Equal(t, "from-flag:7070", cfg.ServerAddress) // флаг победил
+	assert.True(t, cfg.EnableHTTPS)                      // файл дал true
+}
+
+func TestResolveConfig_EnvOverridesFile(t *testing.T) {
+	fileCfg := &fileConfig{
+		ServerAddress: "from-file:9090",
+		EnableHTTPS:   true,
+	}
+	cfg := resolveConfig(
+		DefaultServerAddress, DefaultBaseURL, "from-env:6060", "",
+		DefaultFileStoragePath, "", DefaultDatabaseDSN, "",
+		DefaultSecretKey, "",
+		"", "", "", "",
+		false, true, // envHTTPS = true
+		fileCfg,
+	)
+	assert.Equal(t, "from-env:6060", cfg.ServerAddress)
+	assert.True(t, cfg.EnableHTTPS)
 }
