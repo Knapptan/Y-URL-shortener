@@ -1,3 +1,5 @@
+// Package model определяет доменные модели сервиса: записи URL и
+// асинхронные задачи обработки.
 package model
 
 // URLRecord — запись о сокращённом URL.
@@ -29,6 +31,7 @@ const (
 )
 
 // AsyncJob — задача асинхронного сокращения URL.
+// generate:reset
 type AsyncJob struct {
 	CorrelationID string
 	URL           string

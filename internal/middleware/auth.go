@@ -1,3 +1,5 @@
+// Package middleware предоставляет HTTP-миддлвари: аутентификация,
+// логирование запросов и gzip-сжатие ответов.
 package middleware
 
 import (

@@ -1,3 +1,6 @@
+// Package handler реализует HTTP-обработчики REST API для сервиса:
+// сокращение URL, batch-операции, асинхронная обработка, управление
+// пользователями.
 package handler
 
 import (
@@ -125,7 +128,7 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.WriteHeader(http.StatusCreated)
 	}
-	w.Write([]byte(h.baseURL + "/" + id))
+	_, _ = w.Write([]byte(h.baseURL + "/" + id))
 }
 
 // RedirectToOriginal обрабатывает GET /{id}.

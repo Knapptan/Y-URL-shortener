@@ -1,3 +1,5 @@
+// Package repository предоставляет абстракцию хранилища данных для URL-записей
+// с реализациями для PostgreSQL, JSON-файла и in-memory.
 package repository
 
 import (
@@ -51,13 +53,13 @@ func (r *DBRepository) SaveBatch(batch map[string]model.URLRecord) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare(`INSERT INTO short_urls (id, original_url, user_id, is_deleted) VALUES ($1, $2, $3, $4)`)
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for id, rec := range batch {
 		_, err := stmt.Exec(id, rec.OriginalURL, rec.UserID, rec.Deleted)
@@ -92,7 +94,7 @@ func (r *DBRepository) GetByUserID(userID string) ([]model.URLRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	// Preallocate под типичный размер выборки.
 	records := make([]model.URLRecord, 0, 16)
