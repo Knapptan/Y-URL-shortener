@@ -56,6 +56,20 @@ func (r *benchRepo) BatchDeleteByUserID(userID string, ids []string) error {
 	return nil
 }
 
+func (r *benchRepo) CountURLs() (int, error) {
+	return len(r.data), nil
+}
+
+func (r *benchRepo) CountUsers() (int, error) {
+	users := make(map[string]struct{})
+	for _, rec := range r.data {
+		if rec.UserID != "" {
+			users[rec.UserID] = struct{}{}
+		}
+	}
+	return len(users), nil
+}
+
 // BenchmarkShorten измеряет скорость создания короткого URL.
 func BenchmarkShorten(b *testing.B) {
 	repo := newBenchRepo()

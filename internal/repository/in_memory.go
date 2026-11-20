@@ -98,3 +98,23 @@ func (r *InMemoryRepo) BatchDeleteByUserID(userID string, ids []string) error {
 	}
 	return nil
 }
+
+// CountURLs возвращает количество записей в in-memory хранилище.
+func (r *InMemoryRepo) CountURLs() (int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.store), nil
+}
+
+// CountUsers возвращает количество уникальных userID.
+func (r *InMemoryRepo) CountUsers() (int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	users := make(map[string]struct{})
+	for _, rec := range r.store {
+		if rec.UserID != "" {
+			users[rec.UserID] = struct{}{}
+		}
+	}
+	return len(users), nil
+}

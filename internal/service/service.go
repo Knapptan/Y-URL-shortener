@@ -36,6 +36,12 @@ type BatchResult struct {
 	ShortURL      string
 }
 
+// Stats — агрегированная статистика сервиса.
+type Stats struct {
+	URLs  int
+	Users int
+}
+
 // NewURLService создаёт новый экземпляр URLService.
 func NewURLService(repo repository.URLRepository, baseURL string) *URLService {
 	return &URLService{
@@ -310,4 +316,17 @@ func (s *URLService) GetAsyncJob(correlationID string) (*model.AsyncJob, bool) {
 	// Возвращаем копию, чтобы избежать гонок данных
 	copyJob := *job
 	return &copyJob, true
+}
+
+// Stats возвращает количество URL и уникальных пользователей.
+func (s *URLService) Stats() (Stats, error) {
+	urls, err := s.repo.CountURLs()
+	if err != nil {
+		return Stats{}, err
+	}
+	users, err := s.repo.CountUsers()
+	if err != nil {
+		return Stats{}, err
+	}
+	return Stats{URLs: urls, Users: users}, nil
 }
