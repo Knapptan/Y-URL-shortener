@@ -117,3 +117,17 @@ func (r *DBRepository) BatchDeleteByUserID(userID string, ids []string) error {
 	_, err := r.db.Exec(query, pq.Array(ids), userID)
 	return err
 }
+
+// CountURLs возвращает количество строк в таблице short_urls.
+func (r *DBRepository) CountURLs() (int, error) {
+	var count int
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM short_urls`).Scan(&count)
+	return count, err
+}
+
+// CountUsers возвращает количество уникальных непустых user_id.
+func (r *DBRepository) CountUsers() (int, error) {
+	var count int
+	err := r.db.QueryRow(`SELECT COUNT(DISTINCT user_id) FROM short_urls WHERE user_id IS NOT NULL AND user_id <> ''`).Scan(&count)
+	return count, err
+}

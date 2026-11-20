@@ -76,6 +76,20 @@ func withUserID(r *http.Request, userID string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), middleware.UserIDKey, userID))
 }
 
+func (r *exampleRepo) CountURLs() (int, error) {
+	return len(r.urls), nil
+}
+
+func (r *exampleRepo) CountUsers() (int, error) {
+	users := make(map[string]struct{})
+	for _, rec := range r.urls {
+		if rec.UserID != "" {
+			users[rec.UserID] = struct{}{}
+		}
+	}
+	return len(users), nil
+}
+
 // ExampleURLHandler_CreateShortURL демонстрирует POST /.
 // Если URL уже существует, сервер вернёт 409 Conflict с готовой ссылкой.
 func ExampleURLHandler_CreateShortURL() {

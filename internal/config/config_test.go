@@ -1,217 +1,116 @@
 package config
 
 import (
-	"flag"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestResolveConfig(t *testing.T) {
-	tests := []struct {
-		name              string
-		flagServer        string
-		flagBase          string
-		envServer         string
-		envBase           string
-		flagFile          string
-		envFile           string
-		flagDSN           string
-		envDSN            string
-		flagSecret        string
-		envSecret         string
-		flagAuditFile     string
-		envAuditFile      string
-		flagAuditURL      string
-		envAuditURL       string
-		expectedServer    string
-		expectedBase      string
-		expectedFile      string
-		expectedDSN       string
-		expectedSecret    string
-		expectedAuditFile string
-		expectedAuditURL  string
+// TestPick проверяет ключевую логику приоритетов для строк.
+// Особое внимание — кейсу "флаг явно передан, но равен дефолту":
+// файл НЕ должен побеждать флаг.
+func TestPick(t *testing.T) {
+	cases := []struct {
+		name     string
+		env      string
+		flagVal  string
+		flagSet  bool
+		fileVal  string
+		def      string
+		expected string
 	}{
-		{
-			name:           "no flags, no env",
-			flagServer:     DefaultServerAddress,
-			flagBase:       DefaultBaseURL,
-			flagFile:       "",
-			flagDSN:        "",
-			flagSecret:     DefaultSecretKey,
-			expectedServer: DefaultServerAddress,
-			expectedBase:   DefaultBaseURL,
-			expectedFile:   DefaultFileStoragePath,
-			expectedDSN:    "",
-			expectedSecret: DefaultSecretKey,
-		},
-		{
-			name:           "flag only",
-			flagServer:     "localhost:8888",
-			flagBase:       "http://localhost:8888",
-			flagFile:       "",
-			flagDSN:        "postgres://user:pass@localhost/db",
-			flagSecret:     "flag-secret",
-			expectedServer: "localhost:8888",
-			expectedBase:   "http://localhost:8888",
-			expectedFile:   DefaultFileStoragePath,
-			expectedDSN:    "postgres://user:pass@localhost/db",
-			expectedSecret: "flag-secret",
-		},
-		{
-			name:           "env wins",
-			flagServer:     "localhost:8888",
-			flagBase:       "http://localhost:8888",
-			flagSecret:     "flag-secret",
-			envServer:      "localhost:9999",
-			envBase:        "http://localhost:9999",
-			envSecret:      "env-secret",
-			expectedServer: "localhost:9999",
-			expectedBase:   "http://localhost:9999",
-			expectedFile:   DefaultFileStoragePath,
-			expectedSecret: "env-secret",
-		},
-		{
-			name:              "audit flags only",
-			flagServer:        DefaultServerAddress,
-			flagBase:          DefaultBaseURL,
-			flagSecret:        DefaultSecretKey,
-			flagAuditFile:     "/tmp/audit.log",
-			flagAuditURL:      "http://audit.local/events",
-			expectedServer:    DefaultServerAddress,
-			expectedBase:      DefaultBaseURL,
-			expectedFile:      DefaultFileStoragePath,
-			expectedSecret:    DefaultSecretKey,
-			expectedAuditFile: "/tmp/audit.log",
-			expectedAuditURL:  "http://audit.local/events",
-		},
-		{
-			name:              "audit env wins over flags",
-			flagServer:        DefaultServerAddress,
-			flagBase:          DefaultBaseURL,
-			flagSecret:        DefaultSecretKey,
-			flagAuditFile:     "/tmp/flag-audit.log",
-			envAuditFile:      "/tmp/env-audit.log",
-			flagAuditURL:      "http://flag-audit.local/events",
-			envAuditURL:       "http://env-audit.local/events",
-			expectedServer:    DefaultServerAddress,
-			expectedBase:      DefaultBaseURL,
-			expectedFile:      DefaultFileStoragePath,
-			expectedSecret:    DefaultSecretKey,
-			expectedAuditFile: "/tmp/env-audit.log",
-			expectedAuditURL:  "http://env-audit.local/events",
-		},
-		{
-			name:              "audit disabled by default",
-			flagServer:        DefaultServerAddress,
-			flagBase:          DefaultBaseURL,
-			flagSecret:        DefaultSecretKey,
-			expectedServer:    DefaultServerAddress,
-			expectedBase:      DefaultBaseURL,
-			expectedFile:      DefaultFileStoragePath,
-			expectedSecret:    DefaultSecretKey,
-			expectedAuditFile: "",
-			expectedAuditURL:  "",
-		},
+		{"env beats all", "env", "flag", true, "file", "def", "env"},
+		{"explicit flag beats file", "", "flag", true, "file", "def", "flag"},
+		{"explicit flag==default beats file", "", "def", true, "file", "def", "def"},
+		{"file beats default", "", "def", false, "file", "def", "file"},
+		{"default only", "", "def", false, "", "def", "def"},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := resolveConfig(
-				tt.flagServer, tt.flagBase, tt.envServer, tt.envBase,
-				tt.flagFile, tt.envFile, tt.flagDSN, tt.envDSN,
-				tt.flagSecret, tt.envSecret, tt.flagAuditFile, tt.envAuditFile,
-				tt.flagAuditURL, tt.envAuditURL,
-			)
-			assert.Equal(t, tt.expectedServer, cfg.ServerAddress)
-			assert.Equal(t, tt.expectedBase, cfg.BaseURL)
-			assert.Equal(t, tt.expectedFile, cfg.FileStoragePath)
-			assert.Equal(t, tt.expectedDSN, cfg.DatabaseDSN)
-			assert.Equal(t, tt.expectedSecret, cfg.SecretKey)
-			assert.Equal(t, tt.expectedAuditFile, cfg.AuditFile)
-			assert.Equal(t, tt.expectedAuditURL, cfg.AuditURL)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.expected, pick(c.env, c.flagVal, c.flagSet, c.fileVal, c.def))
 		})
 	}
 }
 
-func TestParseFlags(t *testing.T) {
-	oldArgs := os.Args
-	defer func() { os.Args = oldArgs }()
-
-	t.Run("flag overrides default", func(t *testing.T) {
-		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-		os.Args = []string{"cmd", "-a", "localhost:8888", "-b", "http://localhost:8888", "-s", "my-secret"}
-		t.Setenv(EnvServerAddress, "")
-		t.Setenv(EnvBaseURL, "")
-		t.Setenv(EnvFileStoragePath, "")
-		t.Setenv(EnvDatabaseDSN, "")
-		t.Setenv(EnvSecretKey, "")
-		t.Setenv(EnvAuditFile, "")
-		t.Setenv(EnvAuditURL, "")
-		cfg := ParseFlags()
-		assert.Equal(t, "localhost:8888", cfg.ServerAddress)
-		assert.Equal(t, "http://localhost:8888", cfg.BaseURL)
-		assert.Equal(t, DefaultFileStoragePath, cfg.FileStoragePath)
-		assert.Equal(t, "my-secret", cfg.SecretKey)
-	})
-
-	t.Run("env overrides flag", func(t *testing.T) {
-		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-		os.Args = []string{"cmd", "-a", "localhost:8888", "-b", "http://localhost:8888", "-s", "flag-secret"}
-		t.Setenv(EnvServerAddress, "localhost:9999")
-		t.Setenv(EnvBaseURL, "http://localhost:9999")
-		t.Setenv(EnvFileStoragePath, "")
-		t.Setenv(EnvDatabaseDSN, "")
-		t.Setenv(EnvSecretKey, "env-secret")
-		t.Setenv(EnvAuditFile, "")
-		t.Setenv(EnvAuditURL, "")
-		cfg := ParseFlags()
-		assert.Equal(t, "localhost:9999", cfg.ServerAddress)
-		assert.Equal(t, "http://localhost:9999", cfg.BaseURL)
-		assert.Equal(t, DefaultFileStoragePath, cfg.FileStoragePath)
-		assert.Equal(t, "env-secret", cfg.SecretKey)
-	})
-
-	t.Run("audit flags and env", func(t *testing.T) {
-		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-		os.Args = []string{"cmd", "-audit-file", "/tmp/flag-audit.log", "-audit-url", "http://flag-audit.local/events"}
-		t.Setenv(EnvServerAddress, "")
-		t.Setenv(EnvBaseURL, "")
-		t.Setenv(EnvFileStoragePath, "")
-		t.Setenv(EnvDatabaseDSN, "")
-		t.Setenv(EnvSecretKey, "")
-		t.Setenv(EnvAuditFile, "")
-		t.Setenv(EnvAuditURL, "")
-		cfg := ParseFlags()
-		assert.Equal(t, "/tmp/flag-audit.log", cfg.AuditFile)
-		assert.Equal(t, "http://flag-audit.local/events", cfg.AuditURL)
-
-		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-		os.Args = []string{"cmd", "-audit-file", "/tmp/flag-audit.log", "-audit-url", "http://flag-audit.local/events"}
-		t.Setenv(EnvAuditFile, "/tmp/env-audit.log")
-		t.Setenv(EnvAuditURL, "http://env-audit.local/events")
-		cfg = ParseFlags()
-		assert.Equal(t, "/tmp/env-audit.log", cfg.AuditFile)
-		assert.Equal(t, "http://env-audit.local/events", cfg.AuditURL)
-	})
+// TestPickBool проверяет приоритеты для булевых значений.
+func TestPickBool(t *testing.T) {
+	cases := []struct {
+		name     string
+		envVal   bool
+		envSet   bool
+		flagVal  bool
+		flagSet  bool
+		fileVal  bool
+		expected bool
+	}{
+		{"env=true wins", true, true, false, true, false, true},
+		{"env explicitly false wins over flag", false, true, true, true, true, false},
+		{"flag true when env not set", false, false, true, true, false, true},
+		{"file when neither env nor flag", false, false, false, false, true, true},
+		{"all false", false, false, false, false, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.expected, pickBool(c.envVal, c.envSet, c.flagVal, c.flagSet, c.fileVal))
+		})
+	}
 }
 
-func TestParseFlagsDefaults(t *testing.T) {
-	oldArgs := os.Args
-	defer func() { os.Args = oldArgs }()
+// TestLoadFileConfig проверяет чтение JSON-конфига.
+func TestLoadFileConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	content := `{
+		"server_address": "file:9090",
+		"base_url": "http://file:9090",
+		"file_storage_path": "./file.json",
+		"database_dsn": "postgres://file/db",
+		"secret_key": "file-secret",
+		"audit_file": "/tmp/file.log",
+		"audit_url": "http://audit:8080",
+		"enable_https": true
+	}`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	os.Args = []string{"cmd"}
+	fc, err := loadFileConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "file:9090", fc.ServerAddress)
+	assert.Equal(t, "http://file:9090", fc.BaseURL)
+	assert.Equal(t, "./file.json", fc.FileStoragePath)
+	assert.Equal(t, "postgres://file/db", fc.DatabaseDSN)
+	assert.Equal(t, "file-secret", fc.SecretKey)
+	assert.Equal(t, "/tmp/file.log", fc.AuditFile)
+	assert.Equal(t, "http://audit:8080", fc.AuditURL)
+	assert.True(t, fc.EnableHTTPS)
+}
 
-	t.Setenv(EnvServerAddress, "")
-	t.Setenv(EnvBaseURL, "")
-	t.Setenv(EnvFileStoragePath, "")
-	t.Setenv(EnvDatabaseDSN, "")
-	t.Setenv(EnvSecretKey, "")
+// TestLoadFileConfig_NotFound — отсутствующий файл возвращает ошибку.
+func TestLoadFileConfig_NotFound(t *testing.T) {
+	_, err := loadFileConfig(filepath.Join(t.TempDir(), "missing.json"))
+	assert.Error(t, err)
+}
 
-	cfg := ParseFlags()
-	assert.Equal(t, DefaultServerAddress, cfg.ServerAddress)
-	assert.Equal(t, DefaultBaseURL, cfg.BaseURL)
-	assert.Equal(t, DefaultSecretKey, cfg.SecretKey)
+// TestPickTrustedSubnet - проверяяет чтение ip-адресов из JSON-конфига.
+func TestPickTrustedSubnet(t *testing.T) {
+	cases := []struct {
+		name     string
+		env      string
+		flagVal  string
+		flagSet  bool
+		fileVal  string
+		expected string
+	}{
+		{"env wins", "10.0.0.0/8", "192.168.0.0/16", true, "172.16.0.0/12", "10.0.0.0/8"},
+		{"flag beats file", "", "192.168.0.0/16", true, "172.16.0.0/12", "192.168.0.0/16"},
+		{"file when flag not set", "", "", false, "172.16.0.0/12", "172.16.0.0/12"},
+		{"default empty", "", "", false, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.expected, pick(c.env, c.flagVal, c.flagSet, c.fileVal, DefaultTrustedSubnet))
+		})
+	}
 }
