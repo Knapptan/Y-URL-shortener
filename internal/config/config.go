@@ -1,10 +1,14 @@
-// Package config обеспечивает парсинг конфигурации сервиса через флаги CLI
-// и переменные окружения.
+// Package config обеспечивает парсинг конфигурации сервиса через флаги CLI,
+// переменные окружения и JSON-файл конфигурации.
 package config
 
 import (
+	"encoding/json"
 	"flag"
+	"fmt"
+	"log"
 	"os"
+	"strconv"
 )
 
 // Константы конфигурации: значения по умолчанию и имена переменных окружения.
@@ -38,9 +42,15 @@ const (
 	EnvAuditFile = "AUDIT_FILE"
 	// EnvAuditURL — имя переменной окружения для URL удалённого приёмника аудита.
 	EnvAuditURL = "AUDIT_URL"
+
+	// EnvEnableHTTPS — имя переменной окружения для включения HTTPS.
+	EnvEnableHTTPS = "ENABLE_HTTPS"
+
+	// EnvConfig — имя переменной окружения для пути к JSON-файлу конфигурации.
+	EnvConfig = "CONFIG"
 )
 
-// Config хранит настройки сервиса.
+// Config хранит итоговые настройки сервиса.
 type Config struct {
 	ServerAddress   string
 	BaseURL         string
@@ -49,103 +59,137 @@ type Config struct {
 	SecretKey       string
 	AuditFile       string
 	AuditURL        string
+	EnableHTTPS     bool
 }
 
-// BuildConfig определяет конфигурацию на основе значений из флагов и переменных окружения.
-// Приоритет: переменная окружения > флаг > значение по умолчанию.
-func BuildConfig(flagServerAddress, flagBaseURL string) *Config {
-	return &Config{
-		ServerAddress: DefaultServerAddress,
-		BaseURL:       DefaultBaseURL,
-	}
+// fileConfig — JSON-представление конфигурации из -c.
+type fileConfig struct {
+	ServerAddress   string `json:"server_address"`
+	BaseURL         string `json:"base_url"`
+	FileStoragePath string `json:"file_storage_path"`
+	DatabaseDSN     string `json:"database_dsn"`
+	SecretKey       string `json:"secret_key"`
+	AuditFile       string `json:"audit_file"`
+	AuditURL        string `json:"audit_url"`
+	EnableHTTPS     bool   `json:"enable_https"`
 }
 
-// resolveConfig определяет итоговые значения с учётом приоритета:
-// переменная окружения > переданный флаг > значение по умолчанию.
-func resolveConfig(
-	flagServer, flagBase, envServer, envBase,
-	flagFile, envFile, flagDSN, envDSN,
-	flagSecret, envSecret, flagAuditFile, envAuditFile,
-	flagAuditURL, envAuditURL string,
-) *Config {
-	server := flagServer
-	if envServer != "" {
-		server = envServer
+// loadFileConfig читает JSON-файл конфигурации.
+func loadFileConfig(path string) (*fileConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
-	base := flagBase
-	if envBase != "" {
-		base = envBase
+	var fc fileConfig
+	if err := json.Unmarshal(data, &fc); err != nil {
+		return nil, fmt.Errorf("parse json: %w", err)
 	}
-	filePath := flagFile
-	if envFile != "" {
-		filePath = envFile
-	}
-	if filePath == "" {
-		filePath = DefaultFileStoragePath
-	}
-	dsn := flagDSN
-	if envDSN != "" {
-		dsn = envDSN
-	}
-	secret := flagSecret
-	if envSecret != "" {
-		secret = envSecret
-	}
-	if secret == "" {
-		secret = DefaultSecretKey
-	}
-	auditFile := flagAuditFile
-	if envAuditFile != "" {
-		auditFile = envAuditFile
-	}
-	auditURL := flagAuditURL
-	if envAuditURL != "" {
-		auditURL = envAuditURL
-	}
-	return &Config{
-		ServerAddress:   server,
-		BaseURL:         base,
-		FileStoragePath: filePath,
-		DatabaseDSN:     dsn,
-		SecretKey:       secret,
-		AuditFile:       auditFile,
-		AuditURL:        auditURL,
-	}
+	return &fc, nil
 }
 
-// ParseFlags парсит флаги командной строки и переменные окружения,
-// возвращает конфигурацию с учётом приоритета.
+// pick выбирает значение по приоритету:
+// env (если задан) > flag (если явно передан в CLI) > file > default.
+//
+// Ключевое отличие от наивной реализации: флаг считается «заданным»,
+// если его имя вернул flag.Visit — то есть пользователь действительно
+// передал его в командной строке. Это позволяет отличить
+// «-a localhost:8080 передали явно» от «-a не передавали,
+// значение совпало с дефолтом».
+func pick(env, flagVal string, flagSet bool, fileVal, def string) string {
+	if env != "" {
+		return env
+	}
+	if flagSet {
+		return flagVal
+	}
+	if fileVal != "" {
+		return fileVal
+	}
+	return def
+}
+
+// pickBool — булев аналог pick. envSet/flagSet показывают, было ли
+// значение задано явно (в env или CLI). Это позволяет отличить
+// «ENABLE_HTTPS не задан» от «ENABLE_HTTPS=false».
+func pickBool(envVal, envSet, flagVal, flagSet, fileVal bool) bool {
+	if envSet {
+		return envVal
+	}
+	if flagSet {
+		return flagVal
+	}
+	return fileVal
+}
+
+// envBool читает переменную окружения как bool.
+// Возвращает (значение, было ли переменная задана).
+func envBool(key string) (bool, bool) {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return false, false
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, false
+	}
+	return b, true
+}
+
+// ParseFlags парсит флаги, читает env и файл, собирает конфиг
+// с приоритетом: env > flag (явно задан) > file > default.
 func ParseFlags() *Config {
 	var (
-		serverAddress string
-		baseURL       string
-		filePath      string
-		databaseDSN   string
-		secretKey     string
-		auditFile     string
-		auditURL      string
+		serverAddress   string
+		baseURL         string
+		fileStoragePath string
+		databaseDSN     string
+		secretKey       string
+		auditFile       string
+		auditURL        string
+		configPath      string
+		enableHTTPS     bool
 	)
+
 	flag.StringVar(&serverAddress, "a", DefaultServerAddress, "address and port")
 	flag.StringVar(&baseURL, "b", DefaultBaseURL, "base URL")
-	flag.StringVar(&filePath, "f", DefaultFileStoragePath, "file path for storage")
+	flag.StringVar(&fileStoragePath, "f", DefaultFileStoragePath, "file path for storage")
 	flag.StringVar(&databaseDSN, "d", DefaultDatabaseDSN, "database DSN")
 	flag.StringVar(&secretKey, "s", DefaultSecretKey, "secret key for signing cookies")
 	flag.StringVar(&auditFile, "audit-file", "", "audit log file path")
 	flag.StringVar(&auditURL, "audit-url", "", "audit remote server URL")
+	flag.StringVar(&configPath, "c", "", "path to config file")
+	flag.BoolVar(&enableHTTPS, "https", false, "enable HTTPS")
 	flag.Parse()
 
-	envServer, _ := os.LookupEnv(EnvServerAddress)
-	envBase, _ := os.LookupEnv(EnvBaseURL)
-	envFile, _ := os.LookupEnv(EnvFileStoragePath)
-	envDSN, _ := os.LookupEnv(EnvDatabaseDSN)
-	envSecret, _ := os.LookupEnv(EnvSecretKey)
-	envAuditFile, _ := os.LookupEnv(EnvAuditFile)
-	envAuditURL, _ := os.LookupEnv(EnvAuditURL)
+	// Собираем множество имён флагов, реально переданных в CLI.
+	setFlags := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) {
+		setFlags[f.Name] = true
+	})
 
-	return resolveConfig(
-		serverAddress, baseURL, envServer, envBase,
-		filePath, envFile, databaseDSN, envDSN,
-		secretKey, envSecret, auditFile, envAuditFile,
-		auditURL, envAuditURL,
-	)
+	// Путь к файлу тоже может прийти из env (EnvConfig), если флаг не задан.
+	configPath = pick(os.Getenv(EnvConfig), configPath, setFlags["c"], "", "")
+
+	// Читаем файл, если путь известен.
+	var fileCfg fileConfig
+	if configPath != "" {
+		fc, err := loadFileConfig(configPath)
+		if err != nil {
+			log.Fatalf("load config file %q: %v", configPath, err)
+		}
+		fileCfg = *fc
+	}
+
+	envHTTPSVal, envHTTPSSet := envBool(EnvEnableHTTPS)
+
+	return &Config{
+		ServerAddress:   pick(os.Getenv(EnvServerAddress), serverAddress, setFlags["a"], fileCfg.ServerAddress, DefaultServerAddress),
+		BaseURL:         pick(os.Getenv(EnvBaseURL), baseURL, setFlags["b"], fileCfg.BaseURL, DefaultBaseURL),
+		FileStoragePath: pick(os.Getenv(EnvFileStoragePath), fileStoragePath, setFlags["f"], fileCfg.FileStoragePath, DefaultFileStoragePath),
+		DatabaseDSN:     pick(os.Getenv(EnvDatabaseDSN), databaseDSN, setFlags["d"], fileCfg.DatabaseDSN, DefaultDatabaseDSN),
+		SecretKey:       pick(os.Getenv(EnvSecretKey), secretKey, setFlags["s"], fileCfg.SecretKey, DefaultSecretKey),
+		AuditFile:       pick(os.Getenv(EnvAuditFile), auditFile, setFlags["audit-file"], fileCfg.AuditFile, ""),
+		AuditURL:        pick(os.Getenv(EnvAuditURL), auditURL, setFlags["audit-url"], fileCfg.AuditURL, ""),
+		EnableHTTPS:     pickBool(envHTTPSVal, envHTTPSSet, enableHTTPS, setFlags["https"], fileCfg.EnableHTTPS),
+	}
 }
