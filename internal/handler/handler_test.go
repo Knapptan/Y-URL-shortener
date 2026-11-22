@@ -26,6 +26,8 @@ type mockRepo struct {
 	getByOriginalURLFunc  func(string) (string, model.URLRecord, bool, error)
 	getByUserIDFunc       func(string) ([]model.URLRecord, error)
 	batchDeleteByUserFunc func(string, []string) error
+	countURLsFunc         func() (int, error) // NEW
+	countUsersFunc        func() (int, error) // NEW
 }
 
 func (m *mockRepo) Save(id string, record model.URLRecord) error {
@@ -38,6 +40,20 @@ func (m *mockRepo) Get(id string) (model.URLRecord, bool, error) {
 
 func (m *mockRepo) SaveBatch(batch map[string]model.URLRecord) error {
 	return m.saveBatchFunc(batch)
+}
+
+func (m *mockRepo) CountURLs() (int, error) {
+	if m.countURLsFunc != nil {
+		return m.countURLsFunc()
+	}
+	return 0, nil
+}
+
+func (m *mockRepo) CountUsers() (int, error) {
+	if m.countUsersFunc != nil {
+		return m.countUsersFunc()
+	}
+	return 0, nil
 }
 
 type recordingObserver struct {

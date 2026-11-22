@@ -19,6 +19,8 @@ type mockRepo struct {
 	getByOriginalURLFunc func(string) (string, model.URLRecord, bool, error)
 	getByUserIDFunc      func(string) ([]model.URLRecord, error)
 	batchDeleteFunc      func(string, []string) error
+	countURLsFunc        func() (int, error)
+	countUsersFunc       func() (int, error)
 }
 
 func (m *mockRepo) Save(id string, record model.URLRecord) error {
@@ -61,6 +63,20 @@ func (m *mockRepo) BatchDeleteByUserID(userID string, ids []string) error {
 		return m.batchDeleteFunc(userID, ids)
 	}
 	return nil
+}
+
+func (m *mockRepo) CountURLs() (int, error) {
+	if m.countURLsFunc != nil {
+		return m.countURLsFunc()
+	}
+	return 0, nil
+}
+
+func (m *mockRepo) CountUsers() (int, error) {
+	if m.countUsersFunc != nil {
+		return m.countUsersFunc()
+	}
+	return 0, nil
 }
 
 func TestShorten(t *testing.T) {

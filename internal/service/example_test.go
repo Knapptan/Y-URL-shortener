@@ -52,6 +52,20 @@ func (r *exampleRepo) BatchDeleteByUserID(userID string, ids []string) error {
 	return nil
 }
 
+func (r *exampleRepo) CountURLs() (int, error) {
+	return len(r.urls), nil
+}
+
+func (r *exampleRepo) CountUsers() (int, error) {
+	users := make(map[string]struct{})
+	for _, rec := range r.urls {
+		if rec.UserID != "" {
+			users[rec.UserID] = struct{}{}
+		}
+	}
+	return len(users), nil
+}
+
 // ExampleURLService_GetOriginal демонстрирует получение оригинального URL по ID.
 func ExampleURLService_GetOriginal() {
 	repo := newExampleRepo()

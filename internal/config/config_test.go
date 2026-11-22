@@ -92,3 +92,25 @@ func TestLoadFileConfig_NotFound(t *testing.T) {
 	_, err := loadFileConfig(filepath.Join(t.TempDir(), "missing.json"))
 	assert.Error(t, err)
 }
+
+// TestPickTrustedSubnet - проверяяет чтение ip-адресов из JSON-конфига.
+func TestPickTrustedSubnet(t *testing.T) {
+	cases := []struct {
+		name     string
+		env      string
+		flagVal  string
+		flagSet  bool
+		fileVal  string
+		expected string
+	}{
+		{"env wins", "10.0.0.0/8", "192.168.0.0/16", true, "172.16.0.0/12", "10.0.0.0/8"},
+		{"flag beats file", "", "192.168.0.0/16", true, "172.16.0.0/12", "192.168.0.0/16"},
+		{"file when flag not set", "", "", false, "172.16.0.0/12", "172.16.0.0/12"},
+		{"default empty", "", "", false, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.expected, pick(c.env, c.flagVal, c.flagSet, c.fileVal, DefaultTrustedSubnet))
+		})
+	}
+}
