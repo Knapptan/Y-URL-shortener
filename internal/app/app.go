@@ -123,6 +123,14 @@ func Run(cfg *config.Config) error {
 	h := handler.NewURLHandler(svc, cfg.BaseURL, publisher)
 	pingHandler := handler.NewPingHandler(db)
 
+	// Обработчик внутренней статистики (только для доверенной подсети).
+	statsHandler, err := handler.NewInternalStatsHandler(svc, cfg.TrustedSubnet)
+	if err != nil {
+		slog.Error("Failed to init stats handler", "error", err, "subnet", cfg.TrustedSubnet)
+		return err
+	}
+
+	// === Роутер ===
 	r := chi.NewRouter()
 	r.Use(middleware.AuthMiddleware(cfg.SecretKey))
 	r.Use(middleware.LoggingMiddleware)
@@ -130,13 +138,15 @@ func Run(cfg *config.Config) error {
 
 	r.Get("/ping", pingHandler.Ping)
 	r.Post("/", h.CreateShortURL)
-	r.Get("/{id}", h.RedirectToOriginal)
 	r.Post("/api/shorten", h.CreateShortenJSON)
 	r.Post("/api/shorten/batch", h.CreateShortenBatch)
 	r.Post("/api/shorten/async", h.AsyncShorten)
 	r.Get("/api/shorten/result/{correlation_id}", h.GetAsyncResult)
 	r.Get("/api/user/urls", h.GetUserURLs)
 	r.Delete("/api/user/urls", h.DeleteUserURLs)
+	// Статистика — после конкретных /api/..., но до catch-all /{id}.
+	r.Method(http.MethodGet, "/api/internal/stats", statsHandler)
+	r.Get("/{id}", h.RedirectToOriginal)
 
 	// === HTTP(S)-сервер ===
 	srv := &http.Server{
