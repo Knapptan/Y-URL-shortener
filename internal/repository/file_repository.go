@@ -156,3 +156,23 @@ func (r *FileRepository) BatchDeleteByUserID(userID string, ids []string) error 
 	}
 	return r.saveToFile()
 }
+
+// CountURLs возвращает количество записей в файловом хранилище.
+func (r *FileRepository) CountURLs() (int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.data), nil
+}
+
+// CountUsers возвращает количество уникальных userID.
+func (r *FileRepository) CountUsers() (int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	users := make(map[string]struct{})
+	for _, rec := range r.data {
+		if rec.UserID != "" {
+			users[rec.UserID] = struct{}{}
+		}
+	}
+	return len(users), nil
+}

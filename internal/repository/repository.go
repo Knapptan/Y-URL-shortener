@@ -23,4 +23,8 @@ type URLRepository interface {
 	GetByOriginalURL(originalURL string) (string, model.URLRecord, bool, error)
 	GetByUserID(userID string) ([]model.URLRecord, error)
 	BatchDeleteByUserID(userID string, ids []string) error
+	// CountURLs возвращает количество сокращённых URL в хранилище.
+	CountURLs() (int, error)
+	// CountUsers возвращает количество уникальных пользователей.
+	CountUsers() (int, error)
 }

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,14 +23,18 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/lib/pq"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 
 	"github.com/Knapptan/Y-URL-shortener/internal/audit"
 	"github.com/Knapptan/Y-URL-shortener/internal/cert"
 	"github.com/Knapptan/Y-URL-shortener/internal/config"
+	grpcserver "github.com/Knapptan/Y-URL-shortener/internal/grpcserver"
 	"github.com/Knapptan/Y-URL-shortener/internal/handler"
 	"github.com/Knapptan/Y-URL-shortener/internal/middleware"
 	"github.com/Knapptan/Y-URL-shortener/internal/repository"
 	"github.com/Knapptan/Y-URL-shortener/internal/service"
+	pb "github.com/Knapptan/Y-URL-shortener/proto"
 )
 
 // shutdownTimeout — максимальное время ожидания завершения активных запросов.
@@ -123,6 +128,14 @@ func Run(cfg *config.Config) error {
 	h := handler.NewURLHandler(svc, cfg.BaseURL, publisher)
 	pingHandler := handler.NewPingHandler(db)
 
+	// Обработчик внутренней статистики (только для доверенной подсети).
+	statsHandler, err := handler.NewInternalStatsHandler(svc, cfg.TrustedSubnet)
+	if err != nil {
+		slog.Error("Failed to init stats handler", "error", err, "subnet", cfg.TrustedSubnet)
+		return err
+	}
+
+	// === Роутер ===
 	r := chi.NewRouter()
 	r.Use(middleware.AuthMiddleware(cfg.SecretKey))
 	r.Use(middleware.LoggingMiddleware)
@@ -130,59 +143,86 @@ func Run(cfg *config.Config) error {
 
 	r.Get("/ping", pingHandler.Ping)
 	r.Post("/", h.CreateShortURL)
-	r.Get("/{id}", h.RedirectToOriginal)
 	r.Post("/api/shorten", h.CreateShortenJSON)
 	r.Post("/api/shorten/batch", h.CreateShortenBatch)
 	r.Post("/api/shorten/async", h.AsyncShorten)
 	r.Get("/api/shorten/result/{correlation_id}", h.GetAsyncResult)
 	r.Get("/api/user/urls", h.GetUserURLs)
 	r.Delete("/api/user/urls", h.DeleteUserURLs)
+	// Статистика — после конкретных /api/..., но до catch-all /{id}.
+	r.Method(http.MethodGet, "/api/internal/stats", statsHandler)
+	r.Get("/{id}", h.RedirectToOriginal)
 
-	// === HTTP(S)-сервер ===
-	srv := &http.Server{
+	// === HTTP и gRPC серверы ===
+	httpSrv := &http.Server{
 		Addr:              cfg.ServerAddress,
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	grpcSrv := grpc.NewServer(
+		grpc.UnaryInterceptor(grpcserver.AuthInterceptor(cfg.SecretKey)),
+	)
+	pb.RegisterShortenerServiceServer(grpcSrv, grpcserver.NewServer(svc, cfg.BaseURL))
+	reflection.Register(grpcSrv)
 
 	// Контекст, отменяемый по SIGTERM/SIGINT/SIGQUIT.
 	ctx, stop := signal.NotifyContext(context.Background(),
 		syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer stop()
 
-	// Запускаем сервер в фоновой горутине.
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
+
+	// HTTP-сервер.
+	go func() { errCh <- serve(httpSrv, cfg.EnableHTTPS) }()
+
+	// gRPC-сервер.
 	go func() {
-		errCh <- serve(srv, cfg.EnableHTTPS)
+		lis, err := net.Listen("tcp", cfg.GRPCAddress)
+		if err != nil {
+			errCh <- fmt.Errorf("grpc listen: %w", err)
+			return
+		}
+		slog.Info("starting gRPC server", "addr", cfg.GRPCAddress)
+		if err := grpcSrv.Serve(lis); err != nil {
+			errCh <- err
+		}
 	}()
 
-	// Ждём сигнал или фатальную ошибку сервера.
+	// Ждём сигнал или фатальную ошибку.
 	select {
 	case <-ctx.Done():
 		slog.Info("shutdown signal received, draining connections...")
 	case err := <-errCh:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err != nil &&
+			!errors.Is(err, http.ErrServerClosed) &&
+			!errors.Is(err, grpc.ErrServerStopped) {
 			return fmt.Errorf("server: %w", err)
 		}
-		return nil
 	}
 
-	// Graceful shutdown: перестаём принимать новые соединения,
-	// ждём завершения активных запросов (до shutdownTimeout).
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("graceful shutdown failed, forcing close", "error", err)
-		_ = srv.Close()
+	// gRPC graceful stop.
+	grpcDone := make(chan struct{})
+	go func() {
+		grpcSrv.GracefulStop()
+		close(grpcDone)
+	}()
+	select {
+	case <-grpcDone:
+	case <-shutdownCtx.Done():
+		grpcSrv.Stop()
+	}
+
+	// HTTP graceful shutdown.
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("http graceful shutdown failed, forcing close", "error", err)
+		_ = httpSrv.Close()
 	}
 
 	slog.Info("shutdown complete")
-
-	// Деферы выполнятся при выходе из Run:
-	// fileObserver.Close() — дождётся записи всех событий в файл;
-	// httpObserver.Close() — дождётся отправки всех событий;
-	// db.Close() — закроет соединения с БД.
 	return nil
 }
 
