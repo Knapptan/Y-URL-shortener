@@ -53,6 +53,11 @@ const (
 	EnvTrustedSubnet = "TRUSTED_SUBNET"
 	// DefaultTrustedSubnet — пустое значение означает «доступ запрещён всем».
 	DefaultTrustedSubnet = ""
+
+	// EnvGRPCAddress — имя переменной окружения для адреса gRPC-сервера.
+	EnvGRPCAddress = "GRPC_ADDRESS"
+	// DefaultGRPCAddress — адрес gRPC по умолчанию.
+	DefaultGRPCAddress = "localhost:3200"
 )
 
 // Config хранит итоговые настройки сервиса.
@@ -65,6 +70,7 @@ type Config struct {
 	AuditFile       string
 	AuditURL        string
 	TrustedSubnet   string
+	GRPCAddress     string
 	EnableHTTPS     bool
 }
 
@@ -78,6 +84,7 @@ type fileConfig struct {
 	AuditFile       string `json:"audit_file"`
 	AuditURL        string `json:"audit_url"`
 	TrustedSubnet   string `json:"trusted_subnet"`
+	GRPCAddress     string `json:"grpc_address"`
 	EnableHTTPS     bool   `json:"enable_https"`
 }
 
@@ -155,6 +162,7 @@ func ParseFlags() *Config {
 		auditURL        string
 		configPath      string
 		trustedSubnet   string
+		grpcAddress     string
 		enableHTTPS     bool
 	)
 
@@ -167,6 +175,7 @@ func ParseFlags() *Config {
 	flag.StringVar(&auditURL, "audit-url", "", "audit remote server URL")
 	flag.StringVar(&configPath, "c", "", "path to config file")
 	flag.StringVar(&trustedSubnet, "t", DefaultTrustedSubnet, "trusted subnet in CIDR notation")
+	flag.StringVar(&grpcAddress, "g", DefaultGRPCAddress, "gRPC address")
 	flag.BoolVar(&enableHTTPS, "https", false, "enable HTTPS")
 	flag.Parse()
 
@@ -200,6 +209,7 @@ func ParseFlags() *Config {
 		AuditFile:       pick(os.Getenv(EnvAuditFile), auditFile, setFlags["audit-file"], fileCfg.AuditFile, ""),
 		AuditURL:        pick(os.Getenv(EnvAuditURL), auditURL, setFlags["audit-url"], fileCfg.AuditURL, ""),
 		TrustedSubnet:   pick(os.Getenv(EnvTrustedSubnet), trustedSubnet, setFlags["t"], fileCfg.TrustedSubnet, DefaultTrustedSubnet),
+		GRPCAddress:     pick(os.Getenv(EnvGRPCAddress), grpcAddress, setFlags["g"], fileCfg.GRPCAddress, DefaultGRPCAddress),
 		EnableHTTPS:     pickBool(envHTTPSVal, envHTTPSSet, enableHTTPS, setFlags["https"], fileCfg.EnableHTTPS),
 	}
 }
